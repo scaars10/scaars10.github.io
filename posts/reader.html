@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modest Rooster</title>
+    <link rel="stylesheet" href="../style.css">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,400&family=Inter:wght@400;500&display=swap"
+        rel="stylesheet">
+
+    <!-- Marked.js for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Mermaid.js for Diagrams -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+
+    <style>
+        /* Markdown Specific Styles to match your theme */
+        .markdown-content h1 {
+            font-family: var(--font-serif);
+            margin-top: 2rem;
+        }
+
+        .markdown-content h2 {
+            margin-top: 2rem;
+            font-size: 1.5rem;
+        }
+
+        .markdown-content p {
+            margin-bottom: 1.5rem;
+        }
+
+        .markdown-content code {
+            background: rgba(0, 0, 0, 0.05);
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: 'Inter', monospace;
+            font-size: 0.9em;
+        }
+
+        .markdown-content pre {
+            background: #f4f4f4;
+            padding: 1rem;
+            overflow-x: auto;
+            border-radius: 4px;
+        }
+
+        .markdown-content blockquote {
+            border-left: 3px solid var(--accent-color);
+            padding-left: 1rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .markdown-content img {
+            max-width: 100%;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+
+        #loading {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrapper">
+        <header class="site-header">
+            <h1 class="logo"><a href="/" style="color: inherit; text-decoration: none;">Modest Rooster</a></h1>
+            <nav>
+                <a href="/">Home</a>
+            </nav>
+        </header>
+
+        <main id="content-container">
+            <div id="loading">Loading post...</div>
+            <article class="markdown-content" id="post-content"></article>
+        </main>
+
+        <footer>
+            <p>&copy; 2025.</p>
+        </footer>
+    </div>
+
+    <script>
+        // Simple MD Reader Logic
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            // Support both ?post=name AND #name (Hash is better for avoiding server redirects)
+            let postName = params.get('post');
+
+            if (!postName && window.location.hash) {
+                postName = window.location.hash.substring(1); // Remove the '#'
+            }
+
+            if (!postName) {
+                document.getElementById('loading').innerHTML = `
+                    <div style="text-align: center; padding: 4rem 1rem;">
+                        <h2 style="font-family: var(--font-serif); color: var(--text-primary);">No post specified</h2>
+                        <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+                            Please select a post from the home page.
+                        </p>
+                        <a href="../index.html" style="
+                            display: inline-block;
+                            padding: 0.8rem 1.5rem;
+                            border: 1px solid var(--text-primary);
+                            color: var(--text-primary);
+                            border-radius: 4px; 
+                            text-decoration: none;
+                            font-family: var(--font-sans);
+                            font-size: 0.9rem;">
+                            &larr; Go Home
+                        </a>
+                    </div>`;
+                return;
+            }
+
+            // Ensure we look for the file in the same directory as this HTML file
+            const targetUrl = `./${postName}.md`;
+            fetch(targetUrl)
+                .then(response => {
+                    if (!response.ok) throw new Error(`Post not found (404) at ${targetUrl}`);
+                    return response.text();
+                })
+                .then(markdown => {
+                    document.getElementById('loading').style.display = 'none';
+                    // Render Markdown
+                    document.getElementById('post-content').innerHTML = marked.parse(markdown);
+
+                    // Render Mermaid Diagrams
+                    mermaid.init(undefined, document.querySelectorAll('.language-mermaid'));
+
+                    // Update Title if H1 exists
+                    const h1 = document.querySelector('h1');
+                    if (h1 && document.title === 'Modest Rooster') {
+                        document.title = h1.innerText + ' - Modest Rooster';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('loading').innerHTML = `
+                        <div style="color: #bc4b51; border: 1px solid #bc4b51; padding: 1rem; border-radius: 4px;">
+                            <strong>Error loading post:</strong> ${error.message}<br>
+                            <small>Attempted to fetch: <code>${targetUrl}</code></small><br>
+                            <small>Current URL: <code>${window.location.href}</code></small>
+                        </div>`;
+                    console.error('Markdown fetch error:', error);
+                });
+        });
+    </script>
+</body>
+
+</html>

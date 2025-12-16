@@ -1,0 +1,217 @@
+:root {
+    /* Palette: Aged Paper & Ink */
+    --paper-bg: #f2eecb;
+    /* Distinctly yellow parchment */
+    /* Warmer, aged yellow paper */
+    --ink-primary: #2b2b2b;
+    /* Slightly softer black for contrast */
+    --ink-secondary: #585858;
+    /* Charcoal */
+    --highlight: #a6343e;
+    /* Vintage Red drop cap/accent */
+
+    --font-book: 'Crimson Pro', serif;
+    --font-ui: 'Crimson Pro', serif;
+    /* Using serif for UI too for total immersion */
+}
+
+/* Base Setup */
+html {
+    font-size: 18px;
+    /* Slightly larger base for readability */
+}
+
+body {
+    background-color: var(--paper-bg);
+    color: var(--ink-primary);
+    font-family: var(--font-book);
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* The Page Layout */
+.wrapper {
+    max-width: 38rem;
+    /* approx 60-70 characters per line - ideal reading width */
+    margin: 0 auto;
+    padding: 4rem 2rem;
+}
+
+/* Typography Rules to mimic Print */
+p {
+    margin-bottom: 1.5rem;
+    text-align: justify;
+    /* The hallmark of print */
+    hyphens: auto;
+    /* Essential for justified text */
+    hanging-punctuation: first last;
+}
+
+/* Headings */
+h1,
+h2,
+h3,
+h4,
+h5 {
+    font-weight: 600;
+    color: var(--ink-primary);
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    line-height: 1.25;
+}
+
+h1 {
+    font-size: 2.5rem;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+    text-align: center;
+    /* Classic title centering */
+}
+
+h2 {
+    font-size: 1.75rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    /* Subtle separator */
+    padding-bottom: 0.3rem;
+    margin-top: 3rem;
+}
+
+/* Links (underlined, not colored, like footnotes/references) */
+a {
+    color: var(--ink-primary);
+    text-decoration: underline;
+    text-decoration-color: rgba(0, 0, 0, 0.3);
+    text-underline-offset: 3px;
+    transition: all 0.2s ease;
+}
+
+a:hover {
+    color: var(--highlight);
+    text-decoration-color: var(--highlight);
+}
+
+/* Header / UI Elements */
+.site-header {
+    text-align: center;
+    margin-bottom: 5rem;
+    border-bottom: 4px double rgba(0, 0, 0, 0.1);
+    /* Double line like classic books */
+    padding-bottom: 2rem;
+}
+
+.logo {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-variant: small-caps;
+    /* Classy */
+    margin: 0;
+}
+
+nav {
+    margin-top: 1rem;
+    font-style: italic;
+    font-size: 1.1rem;
+}
+
+nav a {
+    margin: 0 1rem;
+    text-decoration: none;
+    color: var(--ink-secondary);
+}
+
+nav a:hover,
+nav a.active {
+    color: var(--ink-primary);
+    text-decoration: none;
+}
+
+/* Blog Post List */
+.section-label {
+    text-align: center;
+    font-style: italic;
+    font-size: 1rem;
+    color: var(--ink-secondary);
+    margin-bottom: 2rem;
+    position: relative;
+}
+
+.section-label::before,
+.section-label::after {
+    content: "—";
+    margin: 0 0.5rem;
+    opacity: 0.5;
+}
+
+.post-list {
+    list-style: none;
+    padding: 0;
+}
+
+.post-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0.8rem 0;
+    border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
+.post-date {
+    font-variant-numeric: oldstyle-nums;
+    /* 1234567890 style */
+    color: var(--ink-secondary);
+    font-style: italic;
+    min-width: 80px;
+}
+
+.post-link {
+    text-decoration: none;
+    font-weight: 400;
+}
+
+/* Markdown Reader Specifics */
+.markdown-content>p:first-of-type::first-letter {
+    float: left;
+    font-size: 4.5rem;
+    line-height: 0.85;
+    margin-right: 0.5rem;
+    margin-top: 0.1rem;
+    color: var(--highlight);
+    font-family: var(--font-book);
+    font-weight: bold;
+}
+
+.markdown-content blockquote {
+    font-style: italic;
+    margin: 2rem 1rem;
+    padding-left: 1.5rem;
+    border-left: 3px solid var(--highlight);
+    color: var(--ink-secondary);
+}
+
+.markdown-content code {
+    font-family: 'Courier Prime', 'Courier New', monospace;
+    /* Typewriter feel */
+    background: rgba(0, 0, 0, 0.03);
+    padding: 0 4px;
+    font-size: 0.9em;
+}
+
+.markdown-content pre {
+    background: #f4f1ea;
+    /* Slightly darker paper for code blocks */
+    padding: 1.5rem;
+    border-radius: 2px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.05);
+    overflow-x: auto;
+}
+
+/* Footer */
+footer {
+    margin-top: 6rem;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--ink-secondary);
+    font-style: italic;
+}
