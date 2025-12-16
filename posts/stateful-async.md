@@ -280,7 +280,7 @@ Processing-time timers are used for mailbox processing and retry scheduling.
 
 | Version               | Scale                       | Key Outcome                         |
 | --------------------- | --------------------------- | ----------------------------------- |
-| Global Operator       | ~150K/hour                  |     Functional baseline                 |
+| Global Operator       | ~150K/hour                  |     Functional baseline             |
 | Async I/O             | >100M/hour                  |     High throughput, weak consistency   |
 | Custom Implementation | ~76% of Pure Async          |     Fully consistent with at-least-once guarantee |
 
