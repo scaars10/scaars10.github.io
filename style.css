@@ -180,12 +180,22 @@ nav a.active {
     font-weight: 400;
 }
 
-/* Markdown Tables */
+/* Markdown Tables - Mobile Responsive */
 .markdown-content table {
+    display: block;
+    /* Allows scrolling */
     width: 100%;
+    /* Takes full width */
+    overflow-x: auto;
+    /* Adds scrollbar if needed */
+    -webkit-overflow-scrolling: touch;
+    /* Smooth scroll on iOS */
     border-collapse: collapse;
     margin: 2rem 0;
-    font-size: 0.9em;
+    font-size: 0.85em;
+    /* Slightly smaller text for tables */
+    white-space: nowrap;
+    /* Prevents awkward wrapping in tight cells */
 }
 
 .markdown-content th,
