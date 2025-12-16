@@ -1,8 +1,11 @@
 # How We Achieved Scalable and Consistent Enrichment in Flink with At-Least-Once Guarantees
 
+
+---
+
 ## 1. Overview
 
-In this blog, I will share the evolution of the DB enrichment step in one of the projects that I worked on. We had a step in our Flink pipeline, which involved looking at the current entry for a given key, enriching it with a new event, and writing it back. I will highlight how the design matured to handle significantly larger data volumes and stronger consistency requirements.
+In this blog, I will share my work on the evolution of the DB enrichment step in one of the projects that I worked. We had a step in our Flink pipeline, which involved looking at the current entry for a given key, enriching it with a new event, and writing it back. I will highlight how the design matured to handle significantly larger data volumes and stronger consistency requirements.
 
 The enrichment component went through three distinct stages:
 
@@ -124,6 +127,7 @@ The new operator is implemented as a `KeyedProcessFunction`, where each key acts
 
 ```mermaid
 graph TD
+    subgraph Main_Flow
     Start[Incoming Record] --> CheckCache{Check cacheState}
     CheckCache -- Hit --> MergeEmit[Merge + Emit]
     CheckCache -- Miss --> QueryActive{Query in Progress?}
@@ -135,15 +139,18 @@ graph TD
     AsyncQuery -- Callback --> Result{Result Arrives}
     Result -- Success --> MailboxSuccess[Write Result to Mailbox + Release Sem]
     Result -- Failure --> MailboxFail[Mark Failure + Release Sem]
-    
-    MailboxSuccess --> Timer[Processing-Time Timer Fires]
-    MailboxFail --> Timer
-    
-    Timer --> CheckMailbox{Check Mailbox}
+    end
+
+    subgraph Timer_Trigger_Flow
+    TimerEvent[Timer Fires] --> CheckMailbox{Check Mailbox}
     CheckMailbox -- "Missing/Failed" --> Retry[Re-dispatch w/ Backoff]
     CheckMailbox -- Success --> MergeBuffer[Merge Buffered Events]
     MergeBuffer --> EmitFinal[Emit Result]
     EmitFinal --> UpdateCache[Update Cache]
+    end
+
+    MailboxSuccess -.-> TimerEvent
+    MailboxFail -.-> TimerEvent
 ```
 
 This design provides bounded concurrency, consistent enrichment for identical keys, and natural backpressure driven by Scylla capacity.
@@ -271,15 +278,12 @@ Processing-time timers are used for mailbox processing and retry scheduling.
 
 ## 13. Observed and Expected Improvements
 
-| Version               | Scale         | Key Outcome                         |
-| --------------------- | ------------- | ----------------------------------- |
-| Global Operator       | ~150K/hour    | Functional baseline                 |
-| Async I/O             | >100M/hour    | High throughput, weak consistency   |
-| Custom Implementation | ~76% of Async | Fully consistent with at-least-once |
+| Version               | Scale                       | Key Outcome                         |
+| --------------------- | --------------------------- | ----------------------------------- |
+| Global Operator       | ~150K/hour                  |     Functional baseline                 |
+| Async I/O             | >100M/hour                  |     High throughput, weak consistency   |
+| Custom Implementation | ~76% of Pure Async          |     Fully consistent with at-least-once guarantee |
 
-**Performance Test Reference**
-
-* Flink App Performance Testing
 
 ---
 
