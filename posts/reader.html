@@ -138,7 +138,7 @@
                     mermaid.init(undefined, document.querySelectorAll('.language-mermaid'));
 
                     // Update Title if H1 exists
-                    const h1 = document.querySelector('h1');
+                    const h1 = document.querySelector('#post-content h1');
                     if (h1 && document.title === 'scaars10') {
                         document.title = h1.innerText + ' - scaars10';
                     }
