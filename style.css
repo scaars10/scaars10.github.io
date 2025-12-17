@@ -161,10 +161,10 @@ nav a.active {
 
 .post-item {
     display: flex;
-    justify-content: space-between;
     align-items: baseline;
     padding: 0.8rem 0;
     border-bottom: 1px dashed rgba(0, 0, 0, 0.1);
+    gap: 2rem;
 }
 
 .post-date {
@@ -172,7 +172,8 @@ nav a.active {
     /* 1234567890 style */
     color: var(--ink-secondary);
     font-style: italic;
-    min-width: 80px;
+    min-width: 9rem;
+    flex-shrink: 0;
 }
 
 .post-link {
