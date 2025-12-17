@@ -35,7 +35,7 @@ The initial POC version used a single global operator that synchronously read th
 
 **Scaling Issues**
 
-* To achieve the required multi-million-records-per-minute scale, parallelism would need to increase by **100x–200x**.
+* To achieve the required multi-million-records-per-minute scale, parallelism would need to increase by **100x to 200x**.
 * This would massively increase CPU/memory utilization and open too many connections to ScyllaDB, making the design inefficient.
 
 ---
@@ -289,4 +289,4 @@ Processing-time timers are used for mailbox processing and retry scheduling.
 
 ## 14. Summary
 
-The newer design introduces predictable concurrency, per-key consistency, and built-in fault tolerance. While it requires more replicas to reach the same throughput (roughly **76% efficiency** of pure async), it ensures correctness for read–modify–write flows critical for downstream consistency in **ScyllaDB** and **Iceberg**.
+The newer design introduces predictable concurrency, per-key consistency, and built-in fault tolerance. While it requires more replicas to reach the same throughput (roughly **76% efficiency** of pure async), it ensures correctness for read-modify-write flows critical for downstream consistency in **ScyllaDB** and **Iceberg**.

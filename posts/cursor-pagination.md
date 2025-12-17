@@ -8,11 +8,11 @@ Given the performance implications of deep paging and the need for scalable data
 
 ---
 
-## Skip–Limit Pagination
+## Skip-Limit Pagination
 
 ### Mechanism
 
-Skip–limit pagination is MongoDB's most straightforward approach to support pagination. It uses two parameters:
+Skip-limit pagination is MongoDB's most straightforward approach to support pagination. It uses two parameters:
 
 * `skip`: Number of documents to omit from the beginning of the result set
 * `limit`: Maximum number of documents to return
@@ -49,7 +49,7 @@ As pagination moves deeper, performance degrades significantly.
 
 ### Mechanism
 
-Cursor-based pagination relies on a cursor—a pointer to a specific document—to navigate through a collection. Instead of skipping documents, it fetches documents **after** the cursor.
+Cursor-based pagination relies on a cursor (a pointer to a specific document) to navigate through a collection. Instead of skipping documents, it fetches documents **after** the cursor.
 
 Cursors are typically implemented using a unique and monotonic field such as:
 
@@ -124,7 +124,7 @@ This approach is extensible and can be dynamically constructed based on the numb
 
 ### Limitations of Cursor-Based Pagination
 
-Cursor-based pagination can perform worse than skip–limit since the complexity of query increases with the number of sort keys so the need of optimal compound index creation becomes extremely necessary and to add to that, supporting arbitrary user-defined sort combinations can become cumbersome.
+Cursor-based pagination can perform worse than skip-limit since the complexity of query increases with the number of sort keys so the need of optimal compound index creation becomes extremely necessary and to add to that, supporting arbitrary user-defined sort combinations can become cumbersome.
 
 ---
 
@@ -132,7 +132,7 @@ Cursor-based pagination can perform worse than skip–limit since the complexity
 
 * **Efficiency**: Continues directly from the last document without rescanning previous records.
 * **Scalability**: Performance remains stable regardless of dataset size.
-* **Consistency**: More resilient to dataset mutations compared to skip–limit.
+* **Consistency**: More resilient to dataset mutations compared to skip-limit.
 
 ### Disadvantages
 
@@ -204,7 +204,7 @@ We evaluated other approaches such as:
 * Time-series–specific pagination
 * Bucket-based modeling
 
-These approaches were dataset-specific or required specialized modeling. Since pagination support is intended as a **general capability** across datasets with varying characteristics, we narrowed the solution to skip–limit and cursor-based pagination as the most extensible options.
+These approaches were dataset-specific or required specialized modeling. Since pagination support is intended as a **general capability** across datasets with varying characteristics, we narrowed the solution to skip-limit and cursor-based pagination as the most extensible options.
 
 
 ## Results

@@ -1,6 +1,6 @@
 # Exploring Scalable Deep Learning Training on Large Datasets
 
-We often obsess over transformer architectures and optimizer states, but if you can’t feed the GPU fast enough, those TFLOPS are wasted. I ran into this wall while training sequence models as both the number of data sources and the volume of my data kept growing. The dataset wasn’t “Google scale,” but it was large enough—multiple gigabytes of dense floating‑point data—to crash a standard development machine and choke a naive disk-based loader. Fortunately I had enough RAM at the time to get around with simple workarounds but I knew I needed a more robust solution.
+We often obsess over transformer architectures and optimizer states, but if you can’t feed the GPU fast enough, those TFLOPS are wasted. I ran into this wall while training sequence models as both the number of data sources and the volume of my data kept growing. The dataset wasn’t “Google scale,” but it was large enough (multiple gigabytes of dense floating‑point data) to crash a standard development machine and choke a naive disk-based loader. Fortunately I had enough RAM at the time to get around with simple workarounds but I knew I needed a more robust solution.
 
 
 This post documents the journey from a convenient but brittle approach to a robust, OS-native solution built around memory mapping.
@@ -23,12 +23,12 @@ This approach reliably runs into the Out‑Of‑Memory (OOM) killer long before 
 
 ## 2. A First Optimization: Lazy File Loading
 
-A seemingly obvious fix is lazy loading—don’t load data until `__getitem__` is called.
+A seemingly obvious fix is lazy loading: don’t load data until `__getitem__` is called.
 
 * **Mechanism**: Store file paths or offsets. On each sample or batch, open the file, seek to the relevant region, read the required slice, decode it (e.g., CSV/Parquet → NumPy), and close the file.
 * **Reality**: This shifts the bottleneck rather than removing it.
 
-While modern NVMe drives offer excellent raw throughput, lazy loading typically performs many small, fragmented reads. The cost is not the `open()` call itself—which is usually microseconds—but the repeated decoding, allocation, and filesystem bookkeeping that follows. Each access triggers page cache checks, potential page faults, and format parsing, all of which are CPU-heavy operations.
+While modern NVMe drives offer excellent raw throughput, lazy loading typically performs many small, fragmented reads. The cost is not the `open()` call itself (which is usually microseconds) but the repeated decoding, allocation, and filesystem bookkeeping that follows. Each access triggers page cache checks, potential page faults, and format parsing, all of which are CPU-heavy operations.
 
 When multiplied by `(batch_size × num_workers × steps_per_epoch)`, this per-sample overhead quickly dominates. The CPU becomes saturated orchestrating I/O and decoding work, while the GPU remains underutilized, waiting for batches to arrive.
 
@@ -40,7 +40,7 @@ When multiplied by `(batch_size × num_workers × steps_per_epoch)`, this per-sa
 
 While surveying existing solutions, HDF5 appeared repeatedly as a common and well-established choice for large datasets. In theory, it promised structure, compression, and convenience. In practice, it introduced trade-offs that made it a poor fit for high-throughput training.
 
-**Lesson:** HDF5 is excellent for archival and portability, but painful for concurrent, high-throughput deep learning—especially on Windows.
+**Lesson:** HDF5 is excellent for archival and portability, but painful for concurrent, high-throughput deep learning, especially on Windows.
 
 1. **The “GIL” of Data Access**
    Although HDF5 itself is implemented in C, most Python bindings (such as `h5py`) rely on coarse-grained internal locking to ensure safety. With multiple `DataLoader` workers, reads frequently contend on a single lock, effectively serializing access and negating the benefits of parallelism.
@@ -58,7 +58,7 @@ The real solution was to rely on the convenience and feature sets of the operati
 
 Memory-mapped files (`mmap`) map a file directly into a process’s virtual address space:
 
-* **Zero-copy semantics**: The file is the memory—no explicit reads into user-space buffers.
+* **Zero-copy semantics**: The file is the memory; no explicit reads into user-space buffers.
 * **Demand paging**: Pages are loaded only when accessed.
 * **Graceful eviction**: When RAM is under pressure, clean pages are dropped automatically. Performance may degrade, but the process stays alive.
 
@@ -124,7 +124,7 @@ This lookup runs in `O(log K)` time, where `K` is the number of symbols—neglig
 
 The difference was dramatic:
 
-* **Startup time**: Near-instant—just pointer mapping
+* **Startup time**: Near-instant; just pointer mapping
 * **RAM usage**: Flat and predictable; terabytes of data with tens of gigabytes of RAM
 * **GPU utilization**: Consistently high; data loading is no longer the bottleneck
 
