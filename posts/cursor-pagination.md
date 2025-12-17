@@ -1,4 +1,4 @@
-# A Generalized Approach to Platform-Wide Cursor Pagination
+# Solving the Deep Paging Problem: Implementing Generic Cursor Pagination at Scale
 
 ---
 
