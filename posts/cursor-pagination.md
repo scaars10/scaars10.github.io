@@ -1,11 +1,8 @@
 # A Generalized Approach to Platform-Wide Cursor Pagination
 
-**By Priyanshu Sharma**
-*Apr 05, 2024*
-
 ---
 
-This technical note details our journey in implementing generic cursor pagination for MongoDB. We were building a data product where arbitrary queries needed to be supported with efficient pagination.
+This post showcases my findings while implementing generic cursor pagination for MongoDB. We were building a data product where one of the usecases was to support arbitrary queries with efficient pagination.
 
 Given the performance implications of deep paging and the need for scalable data access across datasets of varying characteristics, we evaluated multiple approaches. This post compares the trade-offs between standard skip-limit and cursor-based strategies, specifically when MongoDB’s default mechanisms fail to scale.
 
@@ -86,7 +83,7 @@ Pagination becomes more complex when users specify multiple sort keys. For examp
 * `unit_price` (ascending)
 * `rating` (ascending)
 
-To ensure deterministic ordering, we extend the sort keys by appending `_id` as a tiebreaker:
+To ensure deterministic ordering, we extend the sort keys by appending `_id` as a tiebreaker so actual sort order is preserved while also making sure we always have unique cursor values for next pagination query no matter the sort keys:
 
 ```java
 // Initial query
@@ -171,11 +168,11 @@ Bson queryForNextPage = Filters.and(
         Filters.gt("unit_price", lastUnitPrice),
         Filters.and(
             Filters.eq("unit_price", lastUnitPrice),
-            Filters.gt("gaia_id", lastGaiaId)
+            Filters.gt("rating", lastRating)
         ),
         Filters.and(
             Filters.eq("unit_price", lastUnitPrice),
-            Filters.eq("gaia_id", lastGaiaId),
+            Filters.eq("rating", lastRating),
             Filters.gt("_id", lastId)
         )
     )
@@ -208,3 +205,17 @@ We evaluated other approaches such as:
 * Bucket-based modeling
 
 These approaches were dataset-specific or required specialized modeling. Since pagination support is intended as a **general capability** across datasets with varying characteristics, we narrowed the solution to skip–limit and cursor-based pagination as the most extensible options.
+
+
+## Results
+
+A significant discovery during implementation was that MongoDB's query planner can be inefficient with complex OR logic or multiple sort keys with filters. Because MongoDB’s B-Tree indexing often struggles to utilize multiple indexes for a single query (our initial approach was to generate single indexes for queryable fields of a dataset and let MongoDB’s query planner handle the optimization like we saw with Elasticsearch), we introduced a **Query Optimization Layer**.
+
+We standardized our index builds using the **ESR (Equality, Sort, Range) Rule**:
+
+* **Equality**: Filter fields first (e.g., user_id).
+* **Sort**: Pagination sort keys second (e.g., unit_price, _id).
+* **Range**: Any range filters (e.g., created_at < timestamp) last.
+
+**The Outcome**: <br>
+By adding Query Optimizers and Cursor Based Pagination, we moved away from unpredictable scan times and consistent performance. The result was uniform latency-page 100 now loads as fast as page 1.
