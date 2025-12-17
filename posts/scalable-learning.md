@@ -1,226 +1,167 @@
 # Exploring Scalable Deep Learning Training on Large Datasets
 
----
 
-## 1. Overview
 
-In this document, I share my learnings from building a scalable data processing pipeline for training neural networks on large datasets. This was part of a personal project to explore efficient ways to handle large datasets where the sheer volume of data could exceed available RAM in future (fortunately I have a lot of RAM :-D).
+We often obsess over transformer architectures and optimizer states, but if you can't feed the GPU fast enough, those TFLOPS are wasted. I recently anticipated running into this wall while training sequence models as sources and volume of financial data increased. My dataset wasn't "Google scale", but it was large enough (GBs of raw float data) to crash a standard dev box and choke a naive disk loader but luckily I also had enough RAM to settle with relatively easier but still not optimal solution at the time when I first encountered it but could foresee that it was not the best way to go as data would increase.
 
-The data loading component evolved through three distinct conceptual stages:
-
-* **In-Memory Pandas Loading**
-* **Lazy File Loading**
-* **Unified Memory-Mapped Binary with On-the-Fly Slicing**
-
-Each stage was a response to memory limitations or I/O throughput bottlenecks. The final design leverages `numpy.memmap`, a two-pass scaling strategy, and optimized PyTorch `DataLoader` multiprocessing to maximize GPU utilization while keeping RAM usage constant.
+This document details the transition from a convenient but fragile "load everything in RAM" approach to a robust, OS-native memory mapping strategy.
 
 ---
 
-## 2. Motivation & High-Level Evolution of Design
+## 1. The Naive Approach: "Just Load It"
+The standard data science workflow is seductive in its simplicity:
+1. `pd.read_parquet(files)`
+2. `Tensor(df.values)`
+3. Train.
 
-My objective was to train sequence-based models (transformers/LSTMs) using a configurable lookback window on thousands of distinct entities (e.g., stocks, sensors). The raw data consisted of gigabytes of Parquet files.
+**The Failure Mode:**
+This works for MNIST. It fails for huge datasets.
+Python objects have massive memory overhead. Even using NumPy, creating sliding windows (sequences) for a transformer or LSTM usually implies duplicating data. If you have a time series of length $N$ and a window size $W$, a naive stride expansion explodes memory usage by a factor of $W$.
 
-### 2.1 In-Memory Pandas Loading
-
-The initial approach attempted to load all distinct Parquet files into a single Pandas DataFrame or a list of DataFrames, generate all sliding window sequences (inputs and labels), and convert them to PyTorch tensors.
-
-**Pros**
-* Simple to implement (standard Data Science workflow).
-* Fast random access once loaded.
-
-**Cons**
-* **OOM (Out-of-Memory) crashes**: Expanding 1GB of raw floating-point data into overlapping sequences (e.g., sliding a window of $W$ steps by 1 step) increases memory usage by a factor of roughly $L$ (sequence length).
-* **Slow Startup**: Loading and processing thousands of files took tens of minutes before training could even start.
+We will hit the OOM (Out of Memory) killer almost immediately.
 
 ---
 
-### 2.2 Lazy File Loading
+## 2. The Trap: Lazy File Loading
+One of the most obvious fixes is "Lazy Loading": don't load the file until `__getitem__` asks for it.
+*   **Mechanism**: Store file paths. On every step, open the file, seek, read, close.
+*   **The Reality**: This creates a syscall storm.
 
-To fix OOM issues, I considered keeping files on disk and loading them only when needed during the training loop (`__getitem__`).
+Modern NVMe drives are fast but not that fast, and `open()` and `read()` are system calls. They incur context switches. Doing this thousands of times per second (batch_size * workers) saturates the CPU kernel time. My GPU utilization sat very low because it spent most of its time waiting for the CPU to finish parsing CSVs/Parquets.
 
-**Mechanism**
-* The Dataset holds a list of file paths.
-* On every batch request, it opens the specific file, reads the relevant rows, and returns the tensor.
-
-**Pros**
-* Minimal RAM usage.
-
-**Cons**
-* **IO Bound**: Opening and parsing Parquet/CSV files thousands of times per second is extremely slow.
-* **CPU Bottleneck**: The overhead of file I/O and deserialization starved the GPU.
+**The Lesson**: Minimizing IO latency is not enough; we must minimize *IO Frequency*.
 
 ---
 
-### 2.3 Unified Memory-Mapped Binary (Current Implementation)
 
-To combine the speed of in-memory access with the capacity of disk storage, I implemented a custom solution around `numpy.memmap`.
 
-**Mechanism**
-* I consolidate all independent data files into a single, contiguous binary file on disk.
-* I map this file into virtual memory. The OS handles paging data in and out of RAM automatically.
-* I pre-calculate a "virtual index" that maps a global sample ID (0 to N) to a specific byte offset in the binary file.
+## 3. HDF5
+Naturally, one looks to standard scientific formats like HDF5 (`.h5`). It's designed exactly for this, right?
 
-**Pros**
-* **Zero Copy**: Data is mapped directly from disk to address space.
-* **Constant RAM**: Memory usage is independent of dataset size.
-* **High Throughput**: Sequential and random memory access patterns work well with prefetching capabilites provided by Pytorch DataLoader.
+**The Reality**: HDF5 is fantastic for archival, but painful for high-throughput concurrent deep learning, especially on Windows.
 
----
+1.  **The Global Interpreter Lock (GIL) of Data**: Standard HDF5 libraries often have internal locks. When you try to read from multiple threads, they often serialize the access, killing your parallelism.
+2.  **The Windows "Spawn" Problem**: On Linux, `fork()` is cheap and Copy-on-Write allows easy handle sharing. Windows uses `spawn()`. Every worker process is a fresh interpreter. Passing an HDF5 file handle from the main process to a worker is not feasible as it's not picklable. This forces every worker to `open()` the file independently.
 
-## 3. Implementation Approaches Considered
 
-To handle the complexity of "sequence generation" (creating (X, y) pairs from time series), I evaluated several strategies, including HDF5 and different loading paradigms.
-
-### A. Pre-Generate All Sequences to Disk
-
-**Concept**
-* Iterate through the time series and save every possible sequence as a separate file or a row in a massive HDF5 store.
-
-**Verdict**
-* **Storage Explosion**: Saving overlapping sequences creates massive data redundancy (99% duplicated data between adjacent steps).
+I needed raw throughput, not hierarchical organization. The complexity-to-benefit ratio of getting HDF5 to work reliably with PyTorch `DataLoader` on Windows was simply too high.
 
 ---
 
-### B. HDF5 Storage
+## 4. The Solution: Leveraging the OS Page Cache (`mmap`)
+The correct solution is to stop fighting the OS and let it do what it was designed to do: manage memory.
 
-**Concept**
-* Store the time series data in a hierarchical HDF5 file, which is a standard format for large scientific datasets.
+**Memory Mapped Files (`mmap`)** allow us to map a file on disk directly into the virtual address space of the process.
+*   **Zero-Copy**: We don't read data from disk into a kernel buffer and then copy it to user space. The file *is* the memory.
+*   **Demand Paging**: The OS loads pages (typically 4KB chunks) only when we fault (access) them.
+*   **Eviction**: If RAM gets tight, the OS silently drops clean pages. We don't crash; we just slow down slightly (thrashing), but the pipeline stays alive.
 
-**Verdict**
-* **Windows Compatibility**: I encountered significant file locking issues on Windows, making it difficult to write or read concurrently.
-* **Concurrency with PyTorch**: HDF5 readers are not inherently thread-safe. Using them inside a multi-process `DataLoader` often leads to pickling errors or silent failures unless complex file-handle management logic is implemented.
-* **Limitations**: While powerful, the extra complexity and OS-specific friction made it less suitable for this specific exploration compared to a raw binary memmap.
+### The Architecture: A "Flat Binary"
+To make this work, we can't use complex formats like HDF5 (concurrency issues) or Parquet (compression overhead on read). We need raw, contiguous bytes.
 
----
+I implemented a **Two-Pass Preprocessing Pipeline**:
 
-### C. Generators / IterableDataset
+#### Pass 1: Global Statistics (The Scan)
+We need to normalize inputs, but we can't load the whole dataset to compute `mean` and `std`.
+*   Solution: `StandardScaler.partial_fit()`.
+*   We stream through the raw files, computing running statistics and counting total rows.
+*   *Result*: A global scaler and an exact byte-count for the final file.
 
-**Concept**
-* Use PyTorch's `IterableDataset` to stream data linearly.
+#### Pass 2: The "Linker" (The Write)
+We allocate a massive sparse file on disk (`all_features.mmap`) using `seek` and `write`.
+Then, we reload the raw data, apply the scaler, and blast the `float32` arrays directly into the specific offsets of the memmap.
 
-**Verdict**
-* **No Random Shuffling**: Streaming limits us to sequential training, which introduces high correlation between batch samples and destabilizes gradient descent. Global shuffling is difficult with streams.
-
----
-
-### D. On-the-Fly Slicing with Virtual Indexing (Chosen Approach)
-
-**Concept**
-* Store only the *unique* time steps flat on disk.
-* Construct the sequences dynamically in RAM only when requested by the GPU.
-* Use a cumulative sum array (`cumsum`) to map a linear index `idx` to the correct entity and time offset in O(log N) time.
-
-**Implementation Notes**
-* Uses `np.searchsorted` for fast index resolution.
-* Uses **Multi-Process Safe Handlers** via `worker_init_fn` to ensure file handles are essentially thread-safe across PyTorch workers.
-
----
-
-## 4. Architecture Overview
-
-The pipeline consists of a preprocessing stage and a loading stage.
-
-### High-Level Flow
+We also generate a `metadata.json`. This acts as our "FAT table," mapping a high-level `(Stock_Symbol)` to a low-level `(Start_Byte, End_Byte)`.
 
 ```mermaid
 graph TD
-    subgraph Preprocessing_Pass_1
-    RawFiles[Raw Parquet Files] --> LoadChunk[Load & Clean Chunk]
-    LoadChunk --> PartialFit[Scaler.partial_fit]
-    PartialFit --> Stats[Collect Row Counts]
+    RawData[Raw Parquet Files]
+
+    subgraph "Pass 1: Analysis"
+        direction TB
+        Reader1[Sequential Read]
+        ScalerFit[Scaler Partial Fit]
+        Counter[Row Counter]
+        
+        Reader1 --> ScalerFit
+        Reader1 --> Counter
     end
 
-    subgraph Preprocessing_Pass_2
-    Stats --> AllocMemmap[Allocate Empty Memmap File]
-    RawFiles --> Transform[Load & Transform]
-    Transform --> Scale[Apply Global Scaler]
-    Scale --> WriteMemmap[Write to Memmap Offset]
-    WriteMemmap --> Metadata[Generate Index Map JSON]
+    subgraph "Intermediate State"
+        FittedScaler[Fitted Scaler]
+        FileStats[Row Counts per File]
     end
 
-    subgraph Training_Loop
-    Metadata --> InitDataset[Init Dataset]
-    MemmapFile[all_features.mmap] -.-> SharedMem[Virtual Memory]
-    
-    InitDataset --> DataLoader{PyTorch DataLoader}
-    
-    DataLoader -- "idx" --> Worker1[Worker 1]
-    DataLoader -- "idx" --> Worker2[Worker 2]
-    
-    Worker1 --> CalcOffset[Binary Search Index]
-    CalcOffset --> Slice[Slice SharedMem]
-    Slice --> Tensor[Return Tensor]
+    subgraph "Pass 2: Synthesis"
+        direction TB
+        Allocator[Allocate mmap File]
+        Reader2[Sequential Read]
+        Transformer[Transform & Scale]
+        Writer[Write to Offset]
+        Indexer[Build Index Map]
+
+        Allocator --> Reader2
+        Reader2 --> Transformer
+        Transformer --> Writer
+        Writer --> Indexer
     end
+
+    %% Connecting the Phases
+    RawData --> Reader1
+    ScalerFit --> FittedScaler
+    Counter --> FileStats
+
+    FittedScaler --> Transformer
+    FileStats --> Allocator
+    RawData --> Reader2
+    
+    %% Outputs
+    Indexer --> Metadata[metadata.json]
+    Writer --> BinFile[all_features.mmap]
 ```
-
-This design ensures that the heavy lifting (IO and Scaling) is done once, upfront. Training becomes a pure memory-copy operation.
 
 ---
 
-## 5. Concurrency and Worker Safety
+## 5. The Concurrency "Gotcha" (Fork Safety)
+This is where things get technical. PyTorch's `DataLoader` uses `multiprocessing`. On Linux, this uses `fork()`.
 
-A major challenge with `memmap` in PyTorch is how `multiprocessing` handles file descriptors.
+**The Problem**:
+When you `fork()`, the child process inherits the parent's file descriptors. If you open the memmap in the main process, all workers share the *same* file descriptor and, critically, the same *seek pointer*.
+If Worker A reads, it moves the pointer. Worker B tries to read, and it's reading from the wrong place. Or commonly, segfaults occur inside the C-level lib.
 
-**Problem**
-* If the main process opens the memmap and forks, all workers share the same file descriptor.
-* Concurrent reads can lead to race conditions or segfaults in underlying C libraries depending on the OS.
+**The Fix**:
+We must force a re-open of the file handle *after* the fork.
 
-**Solution**
-* I use a `worker_init_fn` to enforce re-opening the memmap inside each worker process.
-
-**Code Snippet**
 ```python
 def worker_init_fn(worker_id):
-    worker_info = torch.utils.data.get_worker_info()
-    dataset = worker_info.dataset
-    # Crucial: Re-open the file handle in the new process
+    # This runs inside the new process
+    dataset = torch.utils.data.get_worker_info().dataset
+    # Crucial: Get a fresh file descriptor for this process
     dataset.open_memmap()
 ```
 
----
-
-## 6. State Design & File Formats
-
-I utilize a dual-file system to manage the data.
-
-| Component      | Type             | Purpose                                                                 | Structure                                                                 |
-| -------------- | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Index Map**  | `metadata.json`  | Stores the layout of the binary file and global configuration parameters. | JSON containing feature lists, sequence lengths, and per-entity start/end row pointers. |
-| **Data Bloc**  | `all_features.mmap` | The raw, scaled float32 data.                                           | Flat binary array of shape `(Total_Rows, Num_Features)`.                  |
-| **Scaler**     | `joblib`         | Persisted `StandardScaler` state.                                       | Serialized Scikit-Look object including mean and variance vectors.        |
+This ensures every worker has its own private interface to the underlying memory pages.
 
 ---
 
-## 7. Scaling Strategy Details
+## 6. Efficient Indexing: `O(log N)` Resolution
+We have a unified binary blob, but our samples are distinct sequences.
+How do we map global index `i` (0 to 1,000,000) to a specific sequence for "Apple Inc."?
 
-I employed a **Two-Pass** algorithm to handle scaling of data larger than RAM.
-
-1.  **Pass 1 (Statistics)**:
-    *   Iterate over all files.
-    *   Load in chunks if necessary.
-    *   Call `scaler.partial_fit()`.
-    *   Accumulate total row counts.
-2.  **Pass 2 (Transformation)**:
-    *   Allocate the full binary file size on disk (`total_rows * features * 4 bytes`).
-    *   Reload files, call `scaler.transform()`, and flush directly to disk at the calculated offsets.
-
-**Benefit**: I never hold more than one file's worth of data in RAM at a time, yet I achieve globally normalized statistics.
+I used a `cumulative_sum` array of sequence counts.
+*   Let `cumulative_sequences` be `[100, 350, 420...]`.
+*   Global index `300` falls between `100` and `350`.
+*   We find this bin using `np.searchsorted` (Binary Search).
+*   Operation is `O(log K)` where K is the number of stock symbols. Extremely fast.
 
 ---
 
-## 8. Efficiency Comparison
+## 7. Results & Conclusion
 
-| Metric | Naive In-Memory | Lazy Loading | **Memmap Solution** |
-| :--- | :--- | :--- | :--- |
-| **Startup Time** | 15+ mins | < 1 sec | < 1 sec (after 1-time prep) |
-| **RAM Usage** | > 64 GB (OOM) | Low | **Low (< 2 GB)** |
-| **Training Speed** | N/A (Failed) | 15 batches/sec | **120+ batches/sec** |
-| **GPU Utilization** | 0% | ~15% (Starved) | **95%+** |
+The difference is night and day.
 
-*Seeing the GPU go from idle to fully saturated (95%+) was the most satisfying part of this optimization journey.*
+*   **Startup Time**: Near instant. We just map pointers.
+*   **RAM Usage**: Flat. I can train on 1TB of data with 16GB of RAM. The OS manages the working set.
+*   **GPU Utilization**: Saturation. The `DataLoader` is no longer the bottleneck.
 
----
-
-## 9. Summary
-
-Refactoring `DataProcessor.py` to use memory mapping fundamentally solved my scalability issues. By decoupling the storage format from the runtime RAM requirement, I can now scale to **terabytes of historical data** without upgrading my workstation. This exploration confirmed that for fixed-schema float data, raw binary memory mapping often outperforms more complex formats like HDF5 in terms of simplicity and raw throughput.
+By moving to a raw binary format, we stripped away the abstraction layers (Pandas, Parquet, Object overhead) and got closer to the metal. For deep learning on single node , **`mmap` is all you need.**
