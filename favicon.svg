@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- Background -->
+  <rect width="16" height="16" fill="#32CD32" />
+  
+  <!-- Black Fur Base -->
+  <!-- Top Head -->
+  <rect x="3" y="2" width="10" height="9" fill="#000" />
+  <!-- Side Fluff -->
+  <rect x="2" y="4" width="1" height="5" fill="#000" />
+  <rect x="13" y="4" width="1" height="5" fill="#000" />
+  
+  <!-- White Blaze (Center Line) -->
+  <rect x="7" y="2" width="2" height="6" fill="#FFF" />
+  
+  <!-- Eyes -->
+  <rect x="4" y="5" width="2" height="2" fill="#FFF" />
+  <rect x="10" y="5" width="2" height="2" fill="#FFF" />
+  <!-- Pupils -->
+  <!-- <rect x="5" y="6" width="1" height="1" fill="#000" /> -->
+  <!-- <rect x="10" y="6" width="1" height="1" fill="#000" /> -->
+  
+  <!-- Snout (White) -->
+  <rect x="5" y="8" width="6" height="4" fill="#FFF" />
+  <rect x="6" y="12" width="4" height="1" fill="#FFF" />
+
+  <!-- Nose (Black) -->
+  <rect x="7" y="9" width="2" height="2" fill="#000" />
+  
+  <!-- Tongue (Pink) -->
+  <rect x="7" y="12" width="2" height="2" fill="#FF69B4" />
+
+</svg>
