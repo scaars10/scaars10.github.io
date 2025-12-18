@@ -321,21 +321,15 @@ Handling updates remains complex. When a document's sort key changes, it can:
 - Move to a different page
 - Cause duplicates or omissions
 
-For our use case (primarily reads with occasional creates), we accepted cursor pagination's eventual consistency model.
+For our use case (primarily reads with occasional creates), we accepted cursor pagination's consistency model.
 
 ---
 
 ## Results
 
-**Before**: Page 100 took 10-15 seconds (skip-limit)  
-**After**: Page 100 takes ~200ms (cursor pagination)
-
-By combining:
-- Dynamic cursor-based filter generation
-- Strategic compound indexes using ESR
-- Proper projection management
-
-We achieved **uniform latency** regardless of page depth—page 100 loads as fast as page 1.
+**Before**: Page 10000 performance could be potentially thousand times worse  (skip-limit)  
+**After**: Page 10000 takes the same amount of time as page 1 (cursor pagination)
+By combining dynamic cursor-based filter generation, strategic compound indexes using ESR, and proper projection management, we achieved **uniform latency regardless of page depth**.
 
 ---
 
