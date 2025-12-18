@@ -338,6 +338,6 @@ By combining dynamic cursor-based filter generation, strategic compound indexes 
 1. **Cursor pagination is complex but necessary** for deep paging at scale
 2. **Always append `_id`** as a tiebreaker to ensure deterministic ordering
 3. **Build compound indexes strategically** using the ESR rule
-4. **Accept eventual consistency** or implement additional safeguards for updates
+4. **Accept the level of consistency** or implement additional safeguards for updates as cursor based pagination is still more consistent than skip-limit
 
 The complete solution is generic, handling arbitrary sort combinations dynamically while maintaining predictable performance across millions of documents.
