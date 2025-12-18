@@ -516,4 +516,4 @@ The messiness is where the learning happens.
 
 ---
 
-*Written five years after a 6-month internship where I learned that distributed systems are 10% algorithm and 90% "wait, why did it deadlock again?" The code hasn't changed since then, but my understanding certainly has.*
+*This blog was written five years after  I learned that distributed systems are 10% algorithm and 90% "wait, why did it deadlock again?" The code hasn't changed since then, but my understanding certainly has.*
