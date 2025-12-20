@@ -316,6 +316,7 @@ The custom implementation processes tens of millions of records per hour while m
 ## 13. Downsides
 
 The biggest downside of this implementation is the additional complexity it adds to the operator. It requires careful tuning of the configurations - semaphore and the state TTLs to avoid resource exhaustion and data loss. Bad configurations can lead to stressing the DB too much or not enough when concurrency is not regulated properly. Setting the TTL too low can lead to data loss, while setting it too high can lead to resource exhaustion. This operator can be made more intelligent by making it self regulating to some extent but it is not a priority as of now. For now, we ran some perf tests and created a template of safe configurations for the operator.
+
 ---
 
 ## 14. Conclusion
