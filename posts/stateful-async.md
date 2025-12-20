@@ -170,6 +170,7 @@ One major flaw in standard async operators is the lack of built-in throttling.
 **The Problem**
 
 Flink eagerly processes records, firing async queries as fast as possible. Under high load, this can overwhelm the database, causing:
+- Stressing the DB with too many concurrent queries
 - Query timeouts and failures
 - Cascading retries that worsen the problem
 - No natural backpressure to slow down upstream
@@ -312,18 +313,9 @@ The custom implementation processes tens of millions of records per hour while m
 
 ---
 
-## 13. Lessons Learned
+## 13. Downsides
 
-1. **Async I/O isn't always the answer**: Raw throughput doesn't matter if your data is incorrect.
-
-2. **State machines scale**: Per-key coordination can handle massive parallelism without global locks.
-
-3. **Backpressure is critical**: Without admission control, async systems can death-spiral under load.
-
-4. **The mailbox pattern works**: Bridging async callbacks to Flink's threading model requires careful coordination, but it's achievable.
-
-5. **Trade-offs are worth it**: We were willing to sacrifice 24% throughput for correctness since we could still achieve the scale we needed with more resources while maintaining consistency. The alternative—corrupted data in production was unacceptable.
-
+The biggest downside of this implementation is the additional complexity it adds to the operator. It requires careful tuning of the configurations - semaphore and the state TTLs to avoid resource exhaustion and data loss. Bad configurations can lead to stressing the DB too much or not enough when concurrency is not regulated properly. Setting the TTL too low can lead to data loss, while setting it too high can lead to resource exhaustion. This operator can be made more intelligent by making it self regulating to some extent but it is not a priority as of now. For now, we ran some perf tests and created a template of safe configurations for the operator.
 ---
 
 ## 14. Conclusion
@@ -331,8 +323,8 @@ The custom implementation processes tens of millions of records per hour while m
 By combining Flink's stateful processing with careful concurrency control, we achieved:
 
 - **76% of pure async throughput** 
-- **Deterministic per-key consistency** for read-modify-write operations
+- **Deterministic per-key consistency** with At-least-once semantics
 - **Predictable backpressure** that protects ScyllaDB from overload
-- **At-least-once semantics** with automatic retry and recovery
+- **Automatic retry and recovery** with exponential backoff
 
-For pipelines where correctness is non-negotiable—like ours feeding downstream analytics and compliance systems—this architecture strikes the right balance between performance and reliability.
+For pipelines where correctness is non-negotiable—like ours feeding downstream analytics and real time query systems—this architecture strikes the right balance between performance and reliability.
