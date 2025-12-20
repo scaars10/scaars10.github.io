@@ -305,7 +305,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 **Production Impact**
 
-The custom implementation processes tens of millions of records per hour while maintaining:
+The custom implementation can process hundreds of millions of records per hour while maintaining:
 - **Zero lost updates** for concurrent events
 - **Graceful degradation** under ScyllaDB backpressure
 - **Automatic recovery** from transient failures
