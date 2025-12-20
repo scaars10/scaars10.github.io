@@ -56,7 +56,7 @@ For my use case—processing high-frequency time series data where disk was fast
 
 ## 4. Letting the OS Do Its Job: Memory Mapping (`mmap`)
 
-The real solution was to strip away abstraction layers and let the operating system manage memory the way it was designed to.
+The real solution was to strip away abstraction layers and leverage some of the capabilities provided by the OS for this specific issue where file you are dealing with can be much larger than the available memory.
 
 Memory-mapped files (`mmap`) map a file directly into a process's virtual address space:
 
@@ -168,46 +168,7 @@ A companion `metadata.json` stores the index map plus training parameters:
 
 ---
 
-## 5. A Subtle Concurrency Gotcha: Fork Safety
-
-PyTorch's `DataLoader` with `num_workers > 0` relies on multiprocessing. On Linux, this uses `fork()`.
-
-**The problem**: When a process forks, child processes inherit file descriptors. If a memory-mapped file is opened in the parent, all workers share the same underlying file descriptor and seek state. Concurrent access leads to incorrect reads or segmentation faults.
-
-**The fix**: Reopen the memory-mapped file inside each worker process.
-
-```python
-class OnTheFlyDataset(Dataset):
-    def __init__(self, processed_dir):
-        self.metadata_path = os.path.join(processed_dir, 'metadata.json')
-        with open(self.metadata_path, 'r') as f:
-            self.metadata = json.load(f)
-        
-        self.features_path = os.path.join(processed_dir, 'all_features.mmap')
-        self.features_mmap = None  # Initialize per-worker
-        # ... other initialization ...
-    
-    def open_memmap(self):
-        """Called once per worker process"""
-        shape = (self.metadata['total_rows'], self.metadata['num_features'])
-        self.features_mmap = np.memmap(
-            self.features_path, 
-            dtype=self.metadata['dtype'], 
-            mode='r',  # Read-only in workers
-            shape=shape
-        )
-
-def worker_init_fn(worker_id):
-    worker_info = torch.utils.data.get_worker_info()
-    dataset = worker_info.dataset
-    dataset.open_memmap()  # Each worker gets its own file descriptor
-```
-
-This is **critical** when using `if __name__ == '__main__':` protection and `num_workers > 0`. Each worker now has its own file descriptor while still benefiting from shared OS page cache.
-
----
-
-## 6. Efficient Index Resolution
+## 5. Efficient Index Resolution
 
 With all data in a single binary blob, we need efficient sample lookup. The key insight: pre-compute a cumulative index over sequence counts.
 
@@ -258,16 +219,15 @@ The cumulative index enables O(log K) lookup via binary search, where K is the n
 
 ---
 
-## 7. Results and Takeaways
+## 6. Results and Takeaways
 
 The difference was dramatic:
 
 * **Startup time**: Near-instant once features are preprocessed and persisted; just pointer mapping, no data loading
 * **RAM usage**: Flat and predictable; the OS manages paging automatically
-* **GPU utilization**: Consistently high with 4 workers and 10× prefetch
-* **Throughput**: Processed batches (25.6M samples) without I/O bottlenecks
+* **GPU utilization**: Consistently high with 4 workers and 10× prefetch with no I/O bottlenecks
 
-My final configuration:
+Sample configuration:
 ```python
 BATCH_SIZE = 256
 NUM_WORKERS = 4
@@ -275,13 +235,5 @@ PREFETCH_FACTOR = 10
 ```
 
 With `persistent_workers=True` and `pin_memory=True` (for CUDA), the DataLoader maintains a steady stream of GPU-ready batches.
-
-### Key Lessons
-
-1. **Preprocessing is worth it**: The two-pass approach adds upfront cost but eliminates all per-sample overhead during training
-2. **Trust the OS**: Memory mapping leverages decades of virtual memory optimization—don't reinvent it
-3. **Concurrency matters**: The `worker_init_fn` pattern is essential for fork-safe multiprocessing
-4. **Simple formats win**: Raw binary beats complex formats for high-throughput sequential access
-5. **Profile everything**: My initial bottleneck wasn't disk I/O—it was repeated parquet decompression
 
 By stripping away unnecessary abstraction layers and working with the OS rather than against it, the training pipeline became dramatically faster.For single-node deep learning on large sequential datasets, a raw binary format backed by `mmap` is **all you need**. 

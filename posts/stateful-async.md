@@ -200,13 +200,13 @@ Our operator maintains several types of state to coordinate asynchronous operati
 | `eventBuffer` | `ListState<GenericRecord>` | Queues events during active query | Checkpointed, TTL 120s |
 | `isLoading` | `ValueState<Boolean>` | Tracks if query is in progress | Checkpointed, TTL 120s |
 | `activeTimerTimestamp` | `ValueState<Long>` | Tracks registered timer timestamp | Checkpointed, TTL 120s |
-| `asyncResultState` | In-memory cache | Mailbox for async results | Not checkpointed, 120s expiry |
-| `currentAttempt` | In-memory cache | Retry counter & sequence tracker | Not checkpointed, 120s expiry |
+| `asyncResultState` | In-memory cache | Mailbox for async results | Not checkpointed, 60s expiry |
+| `currentAttempt` | In-memory cache | Retry counter & sequence tracker | Not checkpointed, 60s expiry |
 
 **Key Design Decisions**
 
 - **Checkpointed state** is restored after failures, preserving consistency
-- **In-memory caches** are rebuilt on restart, trading durability for performance
+- **In-memory caches** are rebuilt on restart. Retry mechanism makes sure that it is rebuilt when found empty
 - **TTL (120s)** prevents unbounded state growth for abandoned keys
 - **Sequence numbers** prevent out-of-order async results from corrupting state
 
@@ -255,7 +255,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 | Aspect | Global Operator | Pure Async I/O | Custom Async + State |
 |--------|----------------|----------------|---------------------|
-| **Throughput** | ~150K/hour | >100M/hour | ~76M/hour |
+| **Throughput** | ~150K/hour | >100M/hour | >100M/hour (more resources required) |
 | **Concurrency** | Single-threaded | Unbounded (config) | Bounded (semaphore) |
 | **Scalability** | Very limited | Horizontal | Horizontal |
 | **Per-Key Consistency** | Strong | Weak | Strong |
@@ -322,13 +322,13 @@ The custom implementation processes tens of millions of records per hour while m
 
 4. **The mailbox pattern works**: Bridging async callbacks to Flink's threading model requires careful coordination, but it's achievable.
 
-5. **Trade-offs are worth it**: We happily sacrificed 24% throughput for correctness. The alternative—corrupted data in production—is unacceptable.
+5. **Trade-offs are worth it**: We were willing to sacrifice 24% throughput for correctness since we could still achieve the scale we needed with more resources while maintaining consistency. The alternative—corrupted data in production was unacceptable.
 
 ---
 
 ## 14. Conclusion
 
-Building high-throughput, consistent data pipelines requires more than just async I/O. By combining Flink's stateful processing with careful concurrency control and the mailbox pattern, we achieved:
+By combining Flink's stateful processing with careful concurrency control, we achieved:
 
 - **76% of pure async throughput** 
 - **Deterministic per-key consistency** for read-modify-write operations
@@ -336,9 +336,3 @@ Building high-throughput, consistent data pipelines requires more than just asyn
 - **At-least-once semantics** with automatic retry and recovery
 
 For pipelines where correctness is non-negotiable—like ours feeding downstream analytics and compliance systems—this architecture strikes the right balance between performance and reliability.
-
-The code is complex, but the guarantees are worth it. When data integrity matters, sometimes the right solution isn't the fastest one—it's the one that doesn't lose your data.
-
----
-
-**Acknowledgments**: This work was built on the foundations of Flink's excellent stateful processing model and inspired by countless hours of debugging production incidents that taught us why consistency matters.
