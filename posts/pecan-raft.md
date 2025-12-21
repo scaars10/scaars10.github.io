@@ -12,6 +12,8 @@ That's when I switched to Raft. The paper ("In Search of an Understandable Conse
 
 I decided to build **PecanRaft** to prove my understanding. The reality, however, was a humbling lesson in the difference between theoretical comprehension and engineering practice. This blog isn't about a production-ready system. My implementation was far from it. Instead, it's about the specific, often painful lessons I learned when the clean abstractions of the paper met the messy reality of code, threads, and network failures.
 
+
+*This blog was written five years after  I learned that distributed systems are 10% algorithm and 90% "wait, why did it deadlock again?" The code hasn't changed since then, but my understanding certainly has.*
 ---
 
 ## 2. The Illusion of Simplicity
@@ -501,5 +503,3 @@ The messiness is where the learning happens.
 **Repository**: [github.com/scaars10/PecanRaft](https://github.com/scaars10/PecanRaft)  
 
 ---
-
-*This blog was written five years after  I learned that distributed systems are 10% algorithm and 90% "wait, why did it deadlock again?" The code hasn't changed since then, but my understanding certainly has.*
