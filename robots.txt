@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://scaars10.github.io/sitemap.xml

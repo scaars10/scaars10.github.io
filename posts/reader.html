@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Detailed technical post by scaars10.">
     <title>scaars10</title>
     <link rel="icon" type="image/svg+xml" href="../favicon.svg">
     <link rel="stylesheet" href="../style.css">
@@ -120,6 +121,9 @@
                             &larr; Go Home
                         </a>
                     </div>`;
+                document.getElementById('debug-url').textContent = window.location.href;
+                document.getElementById('debug-search').textContent = window.location.search || '(empty)';
+                document.getElementById('debug-hash').textContent = window.location.hash || '(empty)';
                 return;
             }
 
@@ -137,6 +141,13 @@
 
                     // Render Mermaid Diagrams
                     mermaid.init(undefined, document.querySelectorAll('.language-mermaid'));
+
+                    // Update Meta Description
+                    const firstP = document.querySelector('#post-content p');
+                    if (firstP) {
+                        const desc = firstP.textContent.substring(0, 155).trim() + '...';
+                        document.querySelector('meta[name="description"]').content = desc;
+                    }
 
                     // Update Title if H1 exists
                     const h1 = document.querySelector('#post-content h1');
