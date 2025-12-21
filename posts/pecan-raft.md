@@ -1,6 +1,6 @@
 # From Paper to Reality: What I Learned Implementing Raft from Scratch
 
-## 1. Overview
+## Overview
 
 Unlike most engineering programs, my college dedicated the entire 6th semester to internships. I learned a ton, both professionally and personally, and honestly loved the experience (a stark contrast to my college life :D).
 
@@ -10,15 +10,16 @@ I actually started with the Bayou paper, but I hit a wall pretty fast. It's a gr
 
 That's when I switched to Raft. The paper ("In Search of an Understandable Consensus Algorithm") was a satisfying and great experience. It was easy to read and digest. It was elegant, modular, and most importantly, approachable. Leader Election, Log Replication, Safety. It all seemed to click. Plus, the internet is full of Raft discussions, so whenever I got stuck, I knew I could find help. It felt like something I could actually build.
 
-I decided to build **PecanRaft** to prove my understanding. The reality, however, was a humbling lesson in the difference between theoretical comprehension and engineering practice. This blog isn't about a production-ready system. My implementation was far from it. Instead, it's about the specific, often painful lessons I learned when the clean abstractions of the paper met the messy reality of code, threads, and network failures.
+I decided to build **PecanRaft** to prove I understood it. The process, however, quickly highlighted the gap between reading a paper and building a working system. 
 
+This blog isn't about a production-ready system—my implementation was far from it. It's about the specific lessons I learned when the clean abstractions of the paper met the reality of race conditions and network failures.
 
-*This blog was written five years after I learned that distributed systems are 20% algorithms and 80% ‘I don’t know what state the system is actually in right now.' The code hasn't changed since then, but my understanding certainly has.*
+*This blog was written five years after I learned that distributed systems are mostly about handling the unknown. The code hasn't changed since then.*
 
 
 ---
 
-## 2. The Illusion of Simplicity
+## Concurrency Challenges
 
 When reading the paper, everything seemed so sequential:
 - *Timeout happens → Start election*
@@ -72,7 +73,7 @@ node.logLock.readLock().lock();       // Then Lock A
 
 I had multiple threads—timers firing elections, gRPC handlers processing heartbeats, and client requests reading data—all trying to touch the same state. Slapping locks on everything caused the system to deadlock and freeze randomly. Using too few locks corrupted the state. 
 
-**The hard lesson**: Finding that balance where the system was thread-safe but actually *livable* (no deadlocks) was harder than understanding the algorithm itself.
+**The Lesson**: Understanding the algorithm is straightforward. Implementing it in a way that handles concurrency correctly without deadlocking is the actual engineering challenge.
 
 ### What I Should Have Done (But Didn't)
 
@@ -87,9 +88,9 @@ But I never actually fixed these issues. The deadlocks still happen occasionally
 
 ---
 
-## 3. Naive Implementation Choices
+## Implementation Choices
 
-### 3.1 Why I Used gRPC Streaming (And Why It Was Overkill)
+### Why I Used gRPC Streaming (And Why It Was Overkill)
 
 I chose **gRPC bidirectional streaming** for the AppendEntries RPC.
 
@@ -108,13 +109,11 @@ ManagedChannel channel = ManagedChannelBuilder
 channel.shutdown();
 ```
 
-It was inefficient (creating a new connection every 150ms!), but ironically, it saved me from the complex error handling of persistent streams. Connection dies? Just create a new one next time. It worked, but it definitely wasn't "optimal."
+It was inefficient (reconnecting every 150ms is poor practice), but it avoided the complexity of managing long-lived streams. If a connection died, I just made a new one. It worked, but it wasn't elegant.
 
-**What production systems do**: Maintain persistent connections with proper reconnection logic, connection pooling, and health checks.
+**Takeaway**: Sometimes the "wrong" solution teaches you more. I learned about gRPC overhead specifically because I saw the performance impact of doing it this way.
 
-**My takeaway**: Sometimes the "wrong" solution teaches you more than getting it right the first time. I learned about gRPC, connection management, and the overhead of connection setup—all lessons that stuck because I felt the pain.
-
-### 3.2 Using MongoDB for Everything
+### Using MongoDB for Everything
 
 I used MongoDB because it was the only database I was comfortable with at the time.
 
@@ -128,26 +127,13 @@ public void addToUncommittedLog(int key, int value) {
 }
 ```
 
-This made my "high throughput" system crawl. Each write involved:
-1. Serializing to BSON
-2. Network call to MongoDB
-3. Index updates
-4. Document insertion
+This made the system slow. Each write involved serializing to BSON, a network call to Mongo, index updates, and the actual insert. For a consensus system that needs to fsync every log entry before acknowledging, this was a major bottleneck.
 
-For a consensus system that needs to write every single log entry before acknowledging, this was a killer.
+Real systems use optimized write-ahead logs (WALs) like LevelDB/RocksDB or custom append-only files designed for sequential writes. MongoDB is not designed for this use case.
 
-**What I learned later**: Real systems use optimized write-ahead logs (WALs) like:
-- **LevelDB/RocksDB**: Designed for sequential writes
-- **Custom append-only files**: With periodic compaction
-- **Memory-mapped files**: For zero-copy operations
+## Specific Implementation Details
 
-These can achieve microsecond latencies instead of milliseconds. But at the time, I didn't know these existed, and MongoDB was my hammer for every nail.
-
----
-
-## 4. How I Handled Specific Details
-
-### 4.1 Randomized Timers & The "Reset" Problem
+### Randomized Timers & The "Reset" Problem
 
 The paper is clear: *"Randomize your election timeouts to prevent split votes."*
 
@@ -197,7 +183,7 @@ class ElectionTimer {
 
 This avoids the constant schedule/cancel churn and is more efficient. But my implementation never got there—the schedule/cancel approach was "good enough" for learning purposes.
 
-### 4.2 Visual Inspection & Debugging Hell
+### Visual Inspection & Debugging Hell
 
 Running a distributed system on one laptop means staring at 5 terminal windows simultaneously. I manually killed processes to simulate crashes.
 
@@ -221,7 +207,7 @@ I couldn't tell *which* term a vote belonged to, *which* node sent it, or *why* 
 Suddenly, I could trace the flow of events across the cluster by reading logs side-by-side.
 
 
-### 4.3 The "Catch-Up" Mechanism
+### The "Catch-Up" Mechanism
 
 When a follower comes back online after a crash, it's missing potentially thousands of log entries.
 
@@ -235,22 +221,11 @@ if (value.getResponseCode() == ResponseCodes.MORE) {
 }
 ```
 
-This worked, but it was essentially **"Stop-and-Wait"** behavior:
-1. Leader sends entry N
-2. Waits for acknowledgment
-3. Sends entry N+1
-4. Repeat...
+This worked, but it was essentially **"Stop-and-Wait"**. The Leader sends entry N, waits for an ack, then sends N+1. For a node that's 10,000 entries behind, this is incredibly slow.
 
-For a node that's 10,000 entries behind, this is painfully slow.
+Strategies like pipelining (sending batches without waiting) or snapshotting (sending the entire state) would be the correct approach, but I didn't implement them at the time.
 
-**What would work better** (but I never implemented):
-- **Pipelining**: Send multiple batches of log entries before waiting for the first acknowledgment
-- **Snapshotting**: If a node is too far behind, send a snapshot of the entire state instead of replaying every log entry from the beginning
-- **Parallel Streams**: Send different chunks of logs in parallel
-
-My implementation lacks all of these optimizations. If a node was down for too long, it had to replay the *entire* history from entry zero—a fatal flaw for a production system. Although to my credit even at the time I was aware of potential improvements but was more focussed on core functionality and it worked well enough for my small test cluster.
-
-### 4.4 The "Poor Man's Quorum" (CountDownLatch)
+### The "Poor Man's Quorum" (CountDownLatch)
 
 The Raft algorithm requires the leader to wait for a majority of followers to confirm a log entry before committing it. This is inherently asynchronous.
 
@@ -298,12 +273,9 @@ void allAppendEntries() {
 }
 ```
 
-**Why it worked**: It made the code look sequential: `Send → Wait for Majority → Commit`. It effectively turned a distributed consensus problem into a local barrier problem.
+**Why it worked**: It made the code look sequential: `Send -> Wait -> Commit`. It turned a distributed problem into a local threading problem.
 
-**Why it's not prod-ready**: 
-1. **Thread Blocking**: It holds a thread hostage for every single client request. If a follower is slow, the leader's thread is blocked doing nothing.
-2. **Poor Scalability**: Under heavy load, you quickly run out of threads.
-3. **No Timeout Handling**: What if a follower is permanently down?
+**Why it's bad**: It holds a thread hostage for every single client request. If a follower is slow, the leader's thread is blocked doing nothing. It doesn't scale.
 
 **What a better implementation would look like** (that I never built):
 ```java
@@ -334,25 +306,25 @@ This doesn't block threads and scales much better. But for my purposes—learnin
 
 ---
 
-## 5. What I Learned: Theory vs. Reality
+## Comparison
 
 | Concept | The "Paper" Understanding | The Reality |
 |:--------|:--------------------------|:------------|
-| **RPCs** | You send a message, you get a reply. | You send a message, and maybe it gets there, or maybe your wifi blips and your code crashes, or the reply is delayed by 10 seconds. |
-| **State** | You are either Follower, Candidate, or Leader. | You are confusingly "both" because Thread A just changed the state while Thread B is still reading the old value. |
-| **Concurrency** | "Handle messages sequentially". | Using `synchronized` is easy to write but incredibly hard to get right without deadlocks. |
-| **Timers** | "Set a random timeout". | Canceling and recreating timers every 50ms creates significant overhead. |
-| **Log Replication** | "Append entries to your log". | Writing to disk synchronously on every entry kills performance. |
-| **Crashes** | "Node restarts and catches up". | Node wakes up 10,000 entries behind and takes forever to catch up. |
-| **Testing** | "Run it and see if it works". | It works on your laptop, then fails in bizarre ways under network delays or when you least expect it. |
+| **RPCs** | You send a message, you get a reply. | Messages get lost, replies are delayed, or the network fails entirely. |
+| **State** | You are either Follower, Candidate, or Leader. | Threads might read stale state while another thread is updating it. |
+| **Concurrency** | "Handle messages sequentially". | `synchronized` blocks are easy to add but difficult to coordinate without causing deadlocks. |
+| **Timers** | "Set a random timeout". | Creating and canceling timers constantly introduces overhead. |
+| **Log Replication** | "Append entries to your log". | Synchronous disk writes for every entry kills performance. |
+| **Crashes** | "Node restarts and catches up". | Catch-up is slow if you re-send the log one entry at a time. |
+| **Testing** | "Run it and see if it works". | It works in simple cases but fails under specific timing conditions or network delays. |
 
 ---
 
-## 6. What I Would Do Differently (If I Touched This Again)
+## Retrospective
 
 Looking back at PecanRaft five years later, here's what I would change if I ever revisited this project. But to be clear: **I haven't touched this code in 5 years**. These are lessons learned from reading other implementations, working on production systems, and understanding what I got wrong.
 
-### 6.1 Architecture Changes
+### Architecture Changes
 
 **Separate State Machine Interface**
 
@@ -411,7 +383,7 @@ db.put(bytes("entry-" + index), serialize(entry));
 
 This would be orders of magnitude faster than my current MongoDB approach.
 
-### 6.2 Elaborate Testing Strategy
+### Elaborate Testing Strategy
 
 **Chaos Testing**: Building test framework to inject:
 - Network partitions
@@ -443,7 +415,7 @@ This would make tests fast and reproducible instead of taking real wall-clock ti
 
 I never tested these properties systematically—I just ran the system and hoped it worked.
 
-### 6.3 Observability
+### Observability
 
 **Metrics I Should Have Tracked**:
 - Leader election frequency (should be rare)
@@ -470,33 +442,27 @@ But again—I never implemented any of this. PecanRaft remains in its original, 
 
 ---
 
-## 7. Key Takeaways
+## Takeaways
 
-1. **Distributed Systems are Hard**: Not because just the algorithms are complex, but because the real world is messy. Threads race, networks fail, and simple logic gets complicated fast as small modular components interact with each other in different ways and keeping big picture in mind while working on small details can be hard.
+**Distributed Systems are hard.** It's not just the algorithms, but the implementation details. Dealing with race conditions, network failures, and component interactions is complex.
 
-2. **Performance Matters**: Naive choices (like using MongoDB as a WAL) can make an otherwise correct implementation unusably slow.
+**Performance is a feature.** Choices like using MongoDB as a WAL can make a correct implementation unusable. 
 
-3. **Testing is Non-Negotiable**: If you're not actively trying to break your system (network partitions, crashes, delays), you're not really testing it. Along with source code you need to have a proper testing framework for your system through which you can run reproducible tests.
+**Testing needs to be rigorous.** If you aren't simulating network partitions or crashes, you aren't fully testing the system.
 
-4. **Just Start, Then Optimize**: My inefficient implementation taught me more than reading a perfect one would have. Build it, measure it, understand the bottlenecks, then fix them.
+**Just Start.** Building this, however inefficiently, taught me more than reading the paper alone. Build it, measure it, and then fix it.
 
 ---
 
-## 8. Final Thoughts
+## Final Thoughts
 
 **PecanRaft is not production-ready.** It has bugs I never fixed, performance issues I never resolved, and architectural decisions that make me cringe looking back. The deadlocks still happen. The MongoDB writes are still slow. The catch-up mechanism is still inefficient.
 
-I haven't touched this code in 5 years, and I probably never will. It exists as a snapshot of what I knew and didn't know during my internship.
+I haven't touched this code in 5 years, and likely never will. It serves as a snapshot of what I knew at the time.
 
-But here's the thing: building it taught me that **reading papers is not the same as understanding systems**. The gap between "I understand the algorithm" and "I have working, reliable code" is enormous.
+Building this taught me that **reading papers is not the same as understanding systems**. 
 
-If you really want to learn Raft (or any distributed algorithm), don't just read the paper. **Try to build it**. You'll fail a lot. Your first implementation will be slow and buggy. Mine certainly was—and still is. That's the point. 
-
-Every deadlock you debug, every race condition you discover, every performance bottleneck you hit—these are the lessons that turn theoretical knowledge into practical understanding.
-
-The paper taught me Raft. The implementation taught me distributed systems.
-
-The messiness is where the learning happens.
+If you want to learn Raft, I recommend **trying to build it**. You will likely encounter bugs and performance issues, just as I did. But debugging those issues—deadlocks, race conditions, and bottlenecks—is where you truly learn how the system works.
 
 ---
 

@@ -6,7 +6,7 @@ This post documents the journey from a convenient but brittle approach to a robu
 
 ---
 
-## 1. The Naive Approach: "Just Load It"
+## Initial Approach
 
 The standard data science workflow is seductive in its simplicity:
 
@@ -14,11 +14,11 @@ The standard data science workflow is seductive in its simplicity:
 2. Convert it to a tensor
 3. Start training
 
-**The failure mode** becomes obvious once you're dealing with real-world time series. In my case, I needed to generate sequences of N timesteps each, with variable lookhead windows for supervised learning targets. For N total data points and window size W, naive window expansion multiplies memory usage by roughly W. With multiple features per timestep across thousands of entities, this approach could reliably trigger the Out-Of-Memory (OOM) killer before training even began.
+**The failure mode** becomes obvious with real-world time series. I needed to generate sequences of N timesteps each, with variable lookahead windows. Naively expanding these windows in memory multiplies memory usage significantly. With high-dimensional data, this approach reliably triggered OOM kills immediately.
 
 ---
 
-## 2. A First Optimization: Lazy File Loading
+## Lazy Loading
 
 A seemingly obvious fix is lazy loading: don't load data until `__getitem__` is called.
 
@@ -34,11 +34,11 @@ While modern NVMe drives offer excellent raw throughput, lazy loading performs m
 
 When multiplied by `(batch_size × num_workers × steps_per_epoch)`, this per-sample overhead quickly dominates. With my configuration of 256-sample batches and 4 workers with 10× prefetch, that's potentially 10,240 file operations *in flight at once*. The CPU becomes saturated orchestrating I/O and decoding work, while the GPU remains underutilized.
 
-**Lesson:** Reducing I/O latency alone is insufficient. High-throughput training requires amortizing I/O and decoding costs by reading data in large, contiguous chunks and minimizing per-sample overhead.
+**Lesson:** Reducing I/O latency alone isn't enough. High-throughput training requires amortizing I/O and decoding costs by reading data in large, contiguous chunks.
 
 ---
 
-## 3. HDF5: An Easy Solution That Didn't Quite Work
+## Attempting HDF5
 
 While surveying existing solutions, HDF5 appeared repeatedly as a common choice for large datasets. In theory, it promised structure, compression, and convenience. In practice, it introduced trade-offs that made it a poor fit for high-throughput training.
 
@@ -54,9 +54,8 @@ For my use case—processing high-frequency time series data where disk was fast
 
 ---
 
-## 4. Letting the OS Do Its Job: Memory Mapping (`mmap`)
-
-The real solution was to strip away abstraction layers and leverage some of the capabilities provided by the OS for this specific issue where file you are dealing with can be much larger than the available memory.
+## Memory Mapping
+The solution was to strip away abstraction layers and leverage the OS.
 
 Memory-mapped files (`mmap`) map a file directly into a process's virtual address space:
 
@@ -168,7 +167,7 @@ A companion `metadata.json` stores the index map plus training parameters:
 
 ---
 
-## 5. Efficient Index Resolution
+## Index Resolution
 
 With all data in a single binary blob, we need efficient sample lookup. The key insight: pre-compute a cumulative index over sequence counts.
 
@@ -219,21 +218,11 @@ The cumulative index enables O(log K) lookup via binary search, where K is the n
 
 ---
 
-## 6. Results and Takeaways
+## Takeaways
 
 The difference was dramatic:
+* **Startup time**: Near-instant (just pointer mapping).
+* **RAM usage**: Flat and predictable.
+* **GPU utilization**: Consistently high.
 
-* **Startup time**: Near-instant once features are preprocessed and persisted; just pointer mapping, no data loading
-* **RAM usage**: Flat and predictable; the OS manages paging automatically
-* **GPU utilization**: Consistently high with 4 workers and 10× prefetch with no I/O bottlenecks
-
-Sample configuration:
-```python
-BATCH_SIZE = 256
-NUM_WORKERS = 4
-PREFETCH_FACTOR = 10
-```
-
-With `persistent_workers=True` and `pin_memory=True` (for CUDA), the DataLoader maintains a steady stream of GPU-ready batches.
-
-By stripping away unnecessary abstraction layers and working with the OS rather than against it, the training pipeline became dramatically faster.For single-node deep learning on large sequential datasets, a raw binary format backed by `mmap` is **all you need**. 
+By stripping away unnecessary abstraction layers and working with the OS rather than against it, the training pipeline became dramatically faster. For single-node deep learning on large sequential datasets, a raw binary format backed by `mmap` is often the right choice. 

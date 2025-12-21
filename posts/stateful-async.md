@@ -1,91 +1,52 @@
 # Scaling Beyond Async I/O: Achieving High Throughput Per-Key Consistency in Flink Enrichment
 
-## 1. Overview
+## Overview
 
-In this post, I will share my work on how I evolved the database enrichment step in our Flink pipeline to handle significantly larger data volumes while maintaining strong consistency guarantees. Our enrichment component performs a classic read-modify-write pattern: fetch the current state for a key from Database, merge it with incoming events, and write it back.
+This post details how we evolved our Flink enrichment pipeline to handle massive data volumes while maintaining strong consistency. Our component performs a classic read-modify-write: fetch state from Database, merge with an incoming event, and write back.
 
-The journey took us through three distinct architectural stages:
-
-1. **Global Synchronous Operator** – Simple but slow
-2. **Pure Async I/O** – Fast but inconsistent
-3. **Custom Async Implementation with State Management** – Fast and consistent
-
-Each evolution addressed critical limitations discovered in production, progressing from basic throughput improvements to sophisticated stateful coordination that ensures data correctness at scale.
+We went through three distinct stages: a simple synchronous operator (too slow), a pure async implementation (fast but inconsistent), and finally a custom stateful operator that balances both.
 
 ---
 
-## 2. The Journey: From Simple to Scalable
+## Synchronous Processing
 
-### 2.1 Starting Point: Global Synchronous Operator
+Our initial proof-of-concept was simple: a global operator that synchronously read from ScyllaDB, enriched the record, and wrote it back.
 
-Our initial proof-of-concept used a straightforward approach: a single global operator that synchronously read from ScyllaDB, enriched the record, and wrote it back.
-
-**The Good**
-- Simple to implement and reason about
-- Reliable and correct
-
-**The Problem**
-- Abysmal throughput: approximately **150K records per hour**
-- Blocking database calls left Flink resources idle
-- Most CPU and memory sat unused while waiting for I/O
-
-**Why This Couldn't Scale**
-
-To reach our target of millions of records per minute, we would have needed to increase parallelism by 100-200x. This would have:
-- Created an unsustainable number of ScyllaDB connections
-- Massively inflated CPU and memory costs
-- Still underutilized resources due to I/O blocking
-
-The synchronous approach simply wasn't viable for production scale.
+While reliable, the throughput was not acceptable—around **150K records per hour**. Blocking database calls left Flink resources idle, with most CPU and memory sitting unused while waiting for I/O. To reach our target of millions of records per minute, we would have needed 100-200x more parallelism, which would have crushed the database with connections and also increased the resource footprint of the operator.
 
 ---
 
-### 2.2 First Evolution: Asynchronous Enrichment with Flink's Async I/O
+## Standard Async I/O
 
-To break through the throughput ceiling, we adopted Flink's `RichAsyncFunction`, enabling non-blocking database operations.
+To fix the throughput, we switched to Flink's `RichAsyncFunction`. Throughput skyrocketed to **hundreds of millions of records per hour**, and resource utilization was excellent.
 
-**How It Works**
+However, we soon discovered a critical flaw: **Lost Updates**.
 
-Each incoming record triggers an asynchronous ScyllaDB query. While waiting for the response, Flink processes other records, maximizing resource utilization. When results arrive via callback, they're merged with the original record and emitted downstream.
+Under high load, if two events for the same key arrived quickly:
+1. Event A triggers a read at T0.
+2. Event B triggers a read at T1 (before A's write completes).
+3. Both fetch stale state.
+4. The second write overwrites the first, and Event A's data is lost.
 
-**The Transformation**
-- Throughput skyrocketed to **hundreds of millions of records per hour**
-- Near-complete CPU and memory utilization
-- Excellent horizontal scalability
-
-**The Hidden Cost: Lost Updates**
-
-Under high load, a critical flaw could potentially occur. When multiple events for the same key arrived in quick succession:
-
-1. Event A triggers a read at T0
-2. Event B arrives and triggers another read at T1 (before A's write completes)
-3. Both reads fetch the same stale state
-4. Both updates write back, with the second overwriting the first
-5. **Event A's changes are lost**
-
-This race condition could potentially occur, making the solution unsuitable for use cases requiring strong per-key consistency.
+For a system requiring strong per-key consistency, this race condition was unacceptable.
 
 ---
 
-### 2.3 Final Design: Custom Async with Per-Key State Machines
+## Custom Stateful Async
 
-To preserve the throughput benefits of async I/O while guaranteeing consistency, we built a custom operator using `KeyedProcessFunction`. Each key operates as an independent state machine that coordinates asynchronous operations.
+To get both speed and consistency, we built a custom operator using `KeyedProcessFunction`. We treat each key as an independent state machine.
 
-**Core Capabilities**
+**Core Capabilities**:
+* **Per-key serialization**: Only one async query runs per key at a time.
+* **Buffering**: Concurrent events are queued.
+* **Caching**: Recent enrichments are stored in state.
+* **Backpressure**: A semaphore caps concurrent DB queries.
 
-- **Per-key serialization**: Only one async query runs per key at any time
-- **Event buffering**: Concurrent events for the same key are queued and merged later
-- **State caching**: Recent enrichments are stored in Flink state to skip redundant lookups
-- **Intelligent retry**: Transient failures trigger exponential backoff up to a configured limit
-- **Backpressure control**: A semaphore caps concurrent ScyllaDB queries, preventing overload
-
-**The Result**
-
-We achieved approximately **76% of pure async throughput** while guaranteeing per-key consistency and at-least-once processing semantics. For our use case—where correctness is paramount—this trade-off was worth it.
+This approach achieved **76% of the pure async throughput** but with guaranteed correctness.
 
 ---
 
-## 3. Design Alternatives We Considered
+## Design Alternatives
 
 ### A. Mini-Batching Before Enrichment
 
@@ -124,9 +85,9 @@ The mailbox pattern safely bridges the gap between the async I/O thread and Flin
 
 ---
 
-## 4. Architecture Deep Dive
+## Architecture Deep Dive
 
-Our implementation uses `KeyedProcessFunction`, where each key maintains its own isolated state and coordination logic.
+Our implementation uses `KeyedProcessFunction` to isolate state per key.
 
 ### Processing Flow
 
@@ -163,7 +124,7 @@ This design provides:
 
 ---
 
-## 5. Backpressure and Concurrency Control
+## Backpressure and Concurrency Control
 
 One major flaw in standard async operators is the lack of built-in throttling.
 
@@ -191,7 +152,7 @@ This creates a self-regulating system that adapts to ScyllaDB's actual capacity.
 
 ---
 
-## 6. State Management
+## State Management
 
 Our operator maintains several types of state to coordinate asynchronous operations:
 
@@ -213,7 +174,7 @@ Our operator maintains several types of state to coordinate asynchronous operati
 
 ---
 
-## 7. Fault Tolerance: Retries and Recovery
+## Fault Tolerance
 
 ### Retry Strategy
 
@@ -238,7 +199,7 @@ Timers are used for both mailbox processing and retry scheduling.
 
 ---
 
-## 8. Ensuring Per-Key Consistency
+## Ensuring Consistency
 
 Our design guarantees that events for the same key are processed in a deterministic order:
 
@@ -252,7 +213,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ---
 
-## 9. Performance Comparison
+## Comparison
 
 | Aspect | Global Operator | Pure Async I/O | Custom Async + State |
 |--------|----------------|----------------|---------------------|
@@ -268,7 +229,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ---
 
-## 10. Failure Scenarios and Recovery
+## Failure and Recovery
 
 | Component | Behavior After Restart |
 |-----------|----------------------|
@@ -282,7 +243,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ---
 
-## 11. Trade-offs and Considerations
+## Trade-offs
 
 | Benefit | Cost |
 |---------|------|
@@ -294,7 +255,7 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ---
 
-## 12. Results and Impact
+## Results
 
 | Version | Throughput | Consistency | Key Outcome |
 |---------|-----------|-------------|-------------|
@@ -313,19 +274,10 @@ The custom implementation can process hundreds of millions of records per hour w
 
 ---
 
-## 13. Downsides
+## Downsides
 
-The biggest downside of this implementation is the additional complexity it adds to the operator. It requires careful tuning of the configurations - semaphore and the state TTLs to avoid resource exhaustion and data loss. Bad configurations can lead to stressing the DB too much or not enough when concurrency is not regulated properly. Setting the TTL too low can lead to data loss, while setting it too high can lead to resource exhaustion. This operator can be made more intelligent by making it self regulating to some extent but it is not a priority as of now. For now, we ran some perf tests and created a template of safe configurations for the operator.
+The main downside is complexity. You have to tune semaphores and TTLs carefully—too low causes data loss, too high causes resource exhaustion. We've mitigated this with safe configuration templates, but it's not "set and forget".
 
----
+## Conclusion
 
-## 14. Conclusion
-
-By combining Flink's stateful processing with careful concurrency control, we achieved:
-
-- **76% of pure async throughput** 
-- **Deterministic per-key consistency** with At-least-once semantics
-- **Predictable backpressure** that protects ScyllaDB from overload
-- **Automatic retry and recovery** with exponential backoff
-
-For pipelines where correctness is non-negotiable—like ours feeding downstream analytics and real time query systems—this architecture strikes the right balance between performance and reliability.
+By combining Flink's stateful processing with strict concurrency control, we maintained **76% of pure async throughput** while ensuring **deterministic per-key consistency**. For pipelines where correctness is non-negotiable, this was the right trade-off.

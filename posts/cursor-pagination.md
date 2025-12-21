@@ -2,15 +2,13 @@
 
 ---
 
-This post showcases my findings while implementing generic cursor pagination for MongoDB at Expedia Group. We were building a data query platform where one of the core requirements was to support arbitrary queries with efficient pagination across diverse datasets.
+I faced a classic problem while working on a data query platform : building support for arbitrary queries with efficient pagination across diverse datasets.
 
-Given the performance implications of deep paging and the need for scalable data access across datasets of varying characteristics, we evaluated multiple approaches. This post compares the trade-offs between standard skip-limit and cursor-based strategies, and details our production implementation.
+Given the performance implications of deep paging and the need for scalable data access, we had to move beyond standard approaches. Here is how we implemented a generic cursor-based solution that scales.
 
 ---
 
-## The Problem: Skip-Limit Pagination
-
-### Mechanism
+## The Problem with Skip-Limit
 
 Skip-limit pagination is MongoDB's most straightforward approach:
 
@@ -25,17 +23,11 @@ However, internally MongoDB fetches **`N + M` documents and discards the first `
 * Requested documents = 51,000
 * Dropped documents = 50,000
 
-As pagination moves deeper, performance degrades significantly.
+As pagination moves deeper, performance degrades. In our case, users needed to paginate through hundreds of thousands of records with arbitrary sort orders. Skip-limit simply couldn't scale—page 100 would take orders of magnitude longer than page 1.
 
-### The Breaking Point
+## Cursor-Based Pagination
 
-In our use case, users needed to paginate through hundreds of thousands of records with arbitrary sort orders. Skip-limit simply couldn't scale—page 100 would take orders of magnitude longer than page 1.
-
----
-
-## The Solution: Cursor-Based Pagination
-
-### Core Concept
+### The Core Concept
 
 Instead of skipping documents, cursor-based pagination continues from the last seen document using filter conditions. The key insight: **convert pagination into a range query**.
 
@@ -59,7 +51,7 @@ FindIterable<Document> nextPage = collection.find(queryForNextPage)
 
 ---
 
-## Handling Multiple Sort Keys: The Real Challenge
+## Handling Multiple Sort Keys
 
 The complexity increases significantly when users specify custom sort orders. Consider sorting by:
 
@@ -144,7 +136,7 @@ This pattern scales to any number of sort keys automatically.
 
 ---
 
-## Production Implementation Details
+## Implementation Details
 
 ### Query Building
 
@@ -253,7 +245,7 @@ These fields are stripped from the response but stored in pagination metadata fo
 
 ---
 
-## Index Strategy: The ESR Rule
+## Indexing Strategy
 
 A critical discovery: MongoDB's query planner struggles with complex OR conditions and multiple sort keys. Even with individual field indexes, performance was poor.
 
@@ -282,7 +274,7 @@ db.collection.createIndex({
 
 ---
 
-## Handling Data Consistency
+## Consistency and Updates
 
 ### Dealing with New Documents
 
@@ -325,19 +317,19 @@ For our use case (primarily reads with occasional creates), we accepted cursor p
 
 ---
 
-## Results
+## Findings
 
-**Before**: Page 10000 performance could be potentially thousand times worse  (skip-limit)  
-**After**: Page 10000 takes the same amount of time as page 1 (cursor pagination)
-By combining dynamic cursor-based filter generation, strategic compound indexes using ESR, and proper projection management, we achieved **uniform latency regardless of page depth**.
+**Before**: Page 10,000 performance could be thousands of times slower.
+**After**: Page 10,000 takes the same amount of time as page 1.
 
----
+By combining dynamic cursor-based filter generation, strategic compound indexes using ESR, and proper projection management, we achieved uniform latency regardless of page depth.
 
-## Key Takeaways
+## Takeaways
 
-1. **Cursor pagination is complex but necessary** for deep paging at scale
-2. **Always append `_id`** as a tiebreaker to ensure deterministic ordering
-3. **Build compound indexes strategically** using the ESR rule
-4. **Accept the level of consistency** or implement additional safeguards for updates as cursor based pagination is still more consistent than skip-limit
+**Cursor pagination is necessary for scale.** Deep paging fails with skip-limit.
 
-The complete solution is generic, handling arbitrary sort combinations dynamically while maintaining predictable performance across millions of documents.
+**Always use valid tiebreakers.** Appending `_id` or some other unique field if you have any is non-negotiable for deterministic ordering.
+
+**Indexes matter.** The ESR rule is critical for compound indexes.
+
+**Updates are tricky.** Cursor pagination is consistent for inserts but handling updates that change sort order requires accepting some trade-offs.
