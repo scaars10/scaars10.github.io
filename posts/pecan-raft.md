@@ -216,10 +216,6 @@ I couldn't tell *which* term a vote belonged to, *which* node sent it, or *why* 
 
 Suddenly, I could trace the flow of events across the cluster by reading logs side-by-side.
 
-**What production systems do**: 
-- **Distributed Tracing** (OpenTelemetry, Jaeger): Track requests across nodes with correlation IDs
-- **Visualization Tools**: Real-time cluster state visualization
-- **Time-series Metrics**: Grafana dashboards showing leader changes, commit lag, etc.
 
 ### 4.3 The "Catch-Up" Mechanism
 
@@ -248,7 +244,7 @@ For a node that's 10,000 entries behind, this is painfully slow.
 - **Snapshotting**: If a node is too far behind, send a snapshot of the entire state instead of replaying every log entry from the beginning
 - **Parallel Streams**: Send different chunks of logs in parallel
 
-My implementation lacks all of these optimizations. If a node was down for too long, it had to replay the *entire* history from entry zero—a fatal flaw for a production system, but it worked well enough for my 3-node test cluster.
+My implementation lacks all of these optimizations. If a node was down for too long, it had to replay the *entire* history from entry zero—a fatal flaw for a production system. Although to my credit even at the time I was aware of potential improvements but was more focussed on core functionality and it worked well enough for my small test cluster.
 
 ### 4.4 The "Poor Man's Quorum" (CountDownLatch)
 
@@ -411,9 +407,9 @@ db.put(bytes("entry-" + index), serialize(entry));
 
 This would be orders of magnitude faster than my current MongoDB approach.
 
-### 6.2 Testing Strategy I Wish I Had
+### 6.2 Elaborate Testing Strategy
 
-**Chaos Testing**: Using frameworks like Jepsen to inject:
+**Chaos Testing**: Building test framework to inject:
 - Network partitions
 - Clock skew
 - Process crashes
@@ -472,29 +468,19 @@ But again—I never implemented any of this. PecanRaft remains in its original, 
 
 ## 7. Key Takeaways
 
-1. **Distributed Systems are Hard**: Not because the algorithms are complex, but because the real world is messy. Threads race, networks fail, and simple logic gets complicated fast.
+1. **Distributed Systems are Hard**: Not because just the algorithms are complex, but because the real world is messy. Threads race, networks fail, and simple logic gets complicated fast as small modular components interact with each other in different ways and keeping big picture in mind while working on small details can be hard.
 
-2. **Concurrency is the Real Boss Fight**: The Raft paper can be understood in an afternoon. Getting the locking right can take weeks.
+2. **Performance Matters**: Naive choices (like using MongoDB as a WAL) can make an otherwise correct implementation unusably slow.
 
-3. **Performance Matters**: Naive choices (like using MongoDB as a WAL) can make an otherwise correct implementation unusably slow.
+3. **Testing is Non-Negotiable**: If you're not actively trying to break your system (network partitions, crashes, delays), you're not really testing it. Along with source code you need to have a proper testing framework for your system through which you can run reproducible tests.
 
-4. **Testing is Non-Negotiable**: If you're not actively trying to break your system (network partitions, crashes, delays), you're not really testing it.
-
-5. **Start Simple, Then Optimize**: My inefficient implementation taught me more than a perfect one would have. Build it, measure it, understand the bottlenecks, then fix them.
+4. **Just Start, Then Optimize**: My inefficient implementation taught me more than reading a perfect one would have. Build it, measure it, understand the bottlenecks, then fix them.
 
 ---
 
-## 8. Resources That Helped Me
-
-- **[The Raft Paper](https://raft.github.io/raft.pdf)**: Start here. It's genuinely readable.
-- **[Raft Visualization](http://thesecretlivesofdata.com/raft/)**: Beautiful interactive visualization of how Raft works.
-- **[Students' Guide to Raft](https://thesquareplanet.com/blog/students-guide-to-raft/)**: Addresses common implementation pitfalls.
-- **[TiKV's Raft Implementation](https://github.com/tikv/raft-rs)**: Production-grade Rust implementation to study.
-- **[Designing Data-Intensive Applications](https://dataintensive.net/)**: Chapter 9 on consistency and consensus is excellent.
-
 ---
 
-## 9. Final Thoughts
+## 8. Final Thoughts
 
 **PecanRaft is not production-ready.** It has bugs I never fixed, performance issues I never resolved, and architectural decisions that make me cringe looking back. The deadlocks still happen. The MongoDB writes are still slow. The catch-up mechanism is still inefficient.
 
