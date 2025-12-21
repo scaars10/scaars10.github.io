@@ -2,7 +2,7 @@
 
 ## Overview
 
-This post details how we evolved our Flink enrichment pipeline to handle massive data volumes while maintaining strong consistency. Our component performs a classic read-modify-write: fetch state from Database, merge with an incoming event, and write back.
+This post details my work on evolving our Flink enrichment pipeline to handle massive data volumes while maintaining strong consistency. Our component performs a classic read-modify-write: fetch state from Database, merge with an incoming event, and write back.
 
 We went through three distinct stages: a simple synchronous operator (too slow), a pure async implementation (fast but inconsistent), and finally a custom stateful operator that balances both.
 
