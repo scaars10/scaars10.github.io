@@ -18,6 +18,15 @@
 
     <!-- Marked.js for Markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Highlight.js for Syntax Highlighting -->
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+
     <!-- Mermaid.js for Diagrams -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 
@@ -37,7 +46,7 @@
             margin-bottom: 1.5rem;
         }
 
-        .markdown-content code {
+        .markdown-content code:not(.hljs) {
             background: rgba(0, 0, 0, 0.05);
             padding: 2px 5px;
             border-radius: 4px;
@@ -45,8 +54,18 @@
             font-size: 0.9em;
         }
 
+        /* Ensure highlighted blocks inherit correct font/size but don't duplicate padding/bg if not desired */
+        .markdown-content code.hljs {
+            font-family: 'Courier Prime', 'Courier New', monospace;
+            font-size: 0.9em;
+            background: transparent;
+            /* Blend with pre */
+            padding: 0;
+        }
+
         .markdown-content pre {
-            background: #f4f4f4;
+            background: #282c34;
+            color: #abb2bf;
             padding: 1rem;
             overflow-x: auto;
             border-radius: 4px;
@@ -141,6 +160,13 @@
 
                     // Render Mermaid Diagrams
                     mermaid.init(undefined, document.querySelectorAll('.language-mermaid'));
+
+                    // Highlight Code Blocks
+                    document.querySelectorAll('pre code').forEach(el => {
+                        if (!el.classList.contains('language-mermaid')) {
+                            hljs.highlightElement(el);
+                        }
+                    });
 
                     // Update Meta Description
                     const firstP = document.querySelector('#post-content p');
