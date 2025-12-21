@@ -480,8 +480,6 @@ But again—I never implemented any of this. PecanRaft remains in its original, 
 
 ---
 
----
-
 ## 8. Final Thoughts
 
 **PecanRaft is not production-ready.** It has bugs I never fixed, performance issues I never resolved, and architectural decisions that make me cringe looking back. The deadlocks still happen. The MongoDB writes are still slow. The catch-up mechanism is still inefficient.
@@ -501,5 +499,3 @@ The messiness is where the learning happens.
 ---
 
 **Repository**: [github.com/scaars10/PecanRaft](https://github.com/scaars10/PecanRaft)  
-
----
