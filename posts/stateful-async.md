@@ -12,7 +12,7 @@ We went through three distinct stages: a simple synchronous operator (too slow),
 
 Our initial proof-of-concept was simple: a global operator that synchronously read from ScyllaDB, enriched the record, and wrote it back.
 
-While reliable, the throughput was not acceptable—around **150K records per hour**. Blocking database calls left Flink resources idle, with mostly CPU and memory sitting unused while waiting for response from DB. To reach our target of millions of records per minute, we would have needed to increase parallelism by 100-200x. However, just increasing parallelism to solve the problem would have stressed the database with too many concurrent connections and significantly bloated the resource footprint of the operator.
+While reliable, the throughput was not acceptable—around **150K records per hour**. Blocking database calls left Flink resources idle, with mostly CPU and memory sitting unused while waiting for response from DB. To reach our target of millions of records per minute, we would have needed to increase parallelism by order of thousands. However, just increasing parallelism to solve the problem would have stressed the database with too many concurrent connections and significantly bloated the resource footprint of the operator.
 
 ---
 
