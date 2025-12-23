@@ -20,7 +20,7 @@ While reliable, the throughput was not acceptable—around **150K records per ho
 
 To fix the throughput, we switched to Flink's `RichAsyncFunction`. Throughput skyrocketed to **hundreds of millions of records per hour**, and resource utilization was excellent.
 
-However, we soon discovered a critical flaw: **Lost Updates**.
+However, there was a possibility of *lost updates*.
 
 Under high load, if two events for the same key arrived quickly:
 1. Event A triggers a read at T0.
