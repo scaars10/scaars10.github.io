@@ -60,11 +60,11 @@ While this reduces collision probability, it doesn't eliminate it. Events for th
 
 ### B. Blocking Subsequent Events (Key-Partitioned Async)
 
-**Concept**: Use async callbacks for queries, but block processing of subsequent events with the same key until the current operation completes.
+**Concept**: Use async callbacks for queries, but block processing of subsequent events with the same key until the current operation completes. This would be the most efficient and simple way to implement this.
 
 **The Challenge**
 
-Flink's threading model doesn't allow emitting records directly from async callbacks. The callback runs on a different thread than the main processing thread, making it difficult to implement this pattern cleanly without complex synchronization.
+Flink's threading model doesn't allow emitting records directly from async callbacks. The callback runs on a different thread than the main processing thread, making it infeasible to implement this pattern.
 
 ---
 
@@ -81,7 +81,7 @@ Flink's threading model doesn't allow emitting records directly from async callb
 
 **Why This Works**
 
-The mailbox pattern safely bridges the gap between the async I/O thread and Flink's processing thread, enabling proper coordination without violating Flink's threading constraints.
+The mailbox pattern helps in communicating between the async I/O thread and Flink's processing thread, without violating Flink's threading constraints.
 
 ---
 
@@ -126,7 +126,7 @@ This design provides:
 
 ## Backpressure and Concurrency Control
 
-One major flaw in standard async operators is the lack of built-in throttling.
+One major challenge with custom async approach was the ability to throttle the number of concurrent queries. While the `RichAsyncFunction` provides a built-in backpressure mechanism and throttling control, we had to replicate the same functionality in our custom operator.
 
 **The Problem**
 
@@ -148,7 +148,7 @@ Each operator instance maintains an in-memory semaphore configured with `MAX_CON
 4. When a query completes (success or failure), the permit is released
 5. The next waiting record can proceed
 
-This creates a self-regulating system that adapts to ScyllaDB's actual capacity.
+This creates a self-regulating system that adapts to DB cluster's actual capacity.
 
 ---
 
@@ -276,7 +276,7 @@ The custom implementation can process hundreds of millions of records per hour w
 
 ## Downsides
 
-The main downside is complexity. You have to tune semaphores and TTLs carefully—too low causes data loss, too high causes resource exhaustion. We've mitigated this with safe configuration templates, but it's not "set and forget".
+The main downside is complexity. On top of the custom operator implementation, you have to tune semaphores and TTLs carefully—too low causes data loss, too high causes resource exhaustion. We've mitigated this with safe configuration templates, but it's not "set and forget". In future, there is scope to make the operator more *intelligent* by giving it the capability to autotune some of the configs eg. regulate the number of concurrent queries based on the variation of latency from the database cluster.
 
 ## Conclusion
 
