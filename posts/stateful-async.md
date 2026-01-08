@@ -98,13 +98,13 @@ graph TD
     CheckCache -- No --> QueryActive{Query Active?}
     
     QueryActive -- Yes --> Buffer[Buffer Event]
-    QueryActive -- No --> AcquireSem[Acquire Semaphore]
+    QueryActive -- No --> AcquireSem[Acquire Semaphore + Buffer Event]
     
     AcquireSem --> AsyncQuery[Async ScyllaDB Query]
     AsyncQuery --> Callback{Callback}
     
-    Callback -- Success --> WriteMailbox[Write to Mailbox + Release Semaphore]
-    Callback -- Failure --> MarkFailed[Mark Failed + Release Semaphore]
+    Callback -- Success --> WriteMailbox[Write result in Mailbox + Release Semaphore]
+    Callback -- Failure --> MarkFailed[Mark Failed in Mailbox + Release Semaphore]
     
     WriteMailbox --> TimerFires[Timer Fires]
     MarkFailed --> TimerFires
