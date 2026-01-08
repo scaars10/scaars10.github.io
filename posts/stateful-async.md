@@ -111,7 +111,7 @@ graph TD
     
     TimerFires --> CheckResult{Check Result}
     CheckResult -- Success --> MergeAll[Merge Buffered Events]
-    CheckResult -- Failed --> Retry[Retry with Backoff]
+    CheckResult -- Failed or Missing --> Retry[Increase Sequence No. and Retry with Backoff]
     
     MergeAll --> EmitResult[Emit Result]
     EmitResult --> UpdateCache[Update Cache]
