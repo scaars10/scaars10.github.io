@@ -13,9 +13,9 @@ I utilized several classic design patterns—**Proxy, Producer-Consumer, Decorat
 ## The Design Challenge
 
 My requirements were straightforward but conflicting:
-1.  **Multiple Workers**: I have multiple threads running in parallel trying to place orders or check prices for different positions and stocks that I want to track simultaneously.
+1.  **Multiple Workers**: I have multiple threads/processes running in parallel processing cpu/gpu intensive tasks while trying to place orders or check prices for different positions and stocks that I want to track simultaneously.
 2.  **Strict Quotas**: The broker API allows only 10 requests/second and 1 request/second for quotes.
-3.  **Simplicity**: The trading model shouldn't need to know about retries, rate limits, or thread locks.
+3.  **Simplicity**: The trading model should focus solely on crunching huge tensors of data and generating profitable signals, remaining completely agnostic to retries, rate limits, or thread locks.
 
 A naive approach of scattering `time.sleep()` calls throughout the codebase leads to "spaghetti code" and unpredictable behavior. I needed a structural solution.
 
