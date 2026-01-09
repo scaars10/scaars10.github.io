@@ -4,7 +4,7 @@
 
 When building systems that interact with third-party APIs like brokerage platforms, we often face a strict set of constraints: hard limits on request rates (RPM) and the need for decent reliability.
 
-This post explores the Low-Level Design behind an order execution and price treacking module. The goal was to create a codebase that is **clean, maintainable, and respectful of API boundaries** while handling the concurrency required for managing multiple positions.
+This post explores the Low-Level Design behind an order execution and price treacking module. The goal was to create a module that is **clean, maintainable, and respectful of API boundaries** while handling the concurrency required for managing multiple positions and tracked stocks.
 
 I utilized several classic design patterns—**Proxy, Producer-Consumer, Decorator and Read-Through Caching** to abstract away the complexity of rate limiting, network calls and flow control from the core model and business logic.
 
