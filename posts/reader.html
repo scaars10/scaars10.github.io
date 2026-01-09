@@ -4,20 +4,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Detailed technical post by me.">
+    <meta name="description"
+        content="My personal exploration of distributed systems, deep learning, and software architecture.">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://scaars10.github.io/posts/reader.html">
     <meta property="og:title" content="Priyanshu Sharma - Technical Blog">
-    <meta property="og:description" content="Detailed technical post by me.">
+    <meta property="og:description"
+        content="My personal exploration of distributed systems, deep learning, and software architecture.">
     <meta property="og:image" content="https://scaars10.github.io/favicon.svg">
 
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image">
     <meta property="twitter:url" content="https://scaars10.github.io/posts/reader.html">
     <meta property="twitter:title" content="Priyanshu Sharma - Technical Blog">
-    <meta property="twitter:description" content="Detailed technical post by me.">
+    <meta property="twitter:description"
+        content="My personal exploration of distributed systems, deep learning, and software architecture.">
     <meta property="twitter:image" content="https://scaars10.github.io/favicon.svg">
 
     <title>Priyanshu Sharma</title>
@@ -219,11 +222,19 @@
                         }
                     });
 
-                    // Update Meta Description
+                    // Update Meta Description (Standard, OG, Twitter)
                     const firstP = document.querySelector('#post-content p');
                     if (firstP) {
                         const desc = firstP.textContent.substring(0, 155).trim() + '...';
-                        document.querySelector('meta[name="description"]').content = desc;
+                        const metaTags = [
+                            'meta[name="description"]',
+                            'meta[property="og:description"]',
+                            'meta[property="twitter:description"]'
+                        ];
+                        metaTags.forEach(selector => {
+                            const tag = document.querySelector(selector);
+                            if (tag) tag.content = desc;
+                        });
                     }
 
                     // Update Title if H1 exists
