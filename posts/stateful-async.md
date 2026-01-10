@@ -29,6 +29,37 @@ Under high load, if two events for the same key arrived quickly:
 3. Both fetch stale state.
 4. The second write overwrites the first, and Event A's data is lost.
 
+```mermaid
+sequenceDiagram
+    participant Flink
+    participant DB as ScyllaDB
+    
+    Note over Flink, DB: Initial: {Status: "Pending", LastSeen: 10:00}
+    
+    rect rgb(200, 225, 255)
+    Flink->>DB: READ (Event A)
+    Flink->>DB: READ (Event B)
+    end
+    
+    Note right of Flink: ⚠️ RACE CONDITION<br/>Both read the same state!
+    
+    DB-->>Flink: Return "Pending", 10:00 (for A)
+    DB-->>Flink: Return "Pending", 10:00 (for B)
+    
+    rect rgb(220, 255, 220)
+    Note right of Flink: A updates Status -> "Active"
+    Flink->>DB: WRITE {Status: "Active", LastSeen: 10:00}
+    end
+    
+    rect rgb(255, 220, 220)
+    Note right of Flink: B updates LastSeen -> 10:05<br/>(Using STALE Status "Pending")
+    Flink->>DB: WRITE {Status: "Pending", LastSeen: 10:05}
+    end
+    
+    Note over Flink, DB: Final: {Status: "Pending", LastSeen: 10:05}
+    Note right of DB: ❌ LOST UPDATE: "Active" is gone.
+```
+
 For a system requiring strong per-key consistency, this race condition was unacceptable.
 
 ---
@@ -318,7 +349,7 @@ Our design guarantees that events for the same key are processed in a determinis
 | **Concurrency**         | Single-threaded      | Unbounded (config) | Bounded (semaphore)  |
 | **Scalability**         | Very limited         | Horizontal         | Horizontal           |
 | **Per-Key Consistency** | Strong               | Weak               | Strong               |
-| **Retry Handling**      | Manual               | Custom needed      | Built-in             |
+| **Retry Handling**      | Manual               | Custom needed      | Operator-Managed     |
 | **Caching**             | None                 | None               | TTL-based state      |
 | **Backpressure**        | Implicit             | None               | Explicit             |
 
