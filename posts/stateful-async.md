@@ -34,30 +34,30 @@ sequenceDiagram
     participant Flink
     participant DB as ScyllaDB
     
-    Note over Flink, DB: Initial: {Status: "Pending", LastSeen: 10:00}
+    Note over Flink, DB: Initial: {PK: "Cartman", Email: "old@test.com", Phone: "555-0000"}
     
     rect rgb(200, 225, 255)
-    Flink->>DB: READ (Event A)
-    Flink->>DB: READ (Event B)
+    Flink->>DB: READ PK="Cartman" (Event A)
+    Flink->>DB: READ PK="Cartman" (Event B)
     end
     
     Note right of Flink: ⚠️ RACE CONDITION<br/>Both read the same state!
     
-    DB-->>Flink: Return "Pending", 10:00 (for A)
-    DB-->>Flink: Return "Pending", 10:00 (for B)
+    DB-->>Flink: Returns "old@test.com", "555-0000" (for A)
+    DB-->>Flink: Returns "old@test.com", "555-0000" (for B)
     
     rect rgb(220, 255, 220)
-    Note right of Flink: A updates Status -> "Active"
-    Flink->>DB: WRITE {Status: "Active", LastSeen: 10:00}
+    Note right of Flink: A updates Email -> "new@test.com"
+    Flink->>DB: WRITE {PK: "Cartman", Email: "new@test.com", Phone: "555-0000"}
     end
     
     rect rgb(255, 220, 220)
-    Note right of Flink: B updates LastSeen -> 10:05<br/>(Using STALE Status "Pending")
-    Flink->>DB: WRITE {Status: "Pending", LastSeen: 10:05}
+    Note right of Flink: B updates Phone -> "555-9999"<br/>(Using STALE Email "old@test.com")
+    Flink->>DB: WRITE {PK: "Cartman", Email: "old@test.com", Phone: "555-9999"}
     end
     
-    Note over Flink, DB: Final: {Status: "Pending", LastSeen: 10:05}
-    Note right of DB: ❌ LOST UPDATE: "Active" is gone.
+    Note over Flink, DB: Final: {PK: "Cartman", Email: "old@test.com", Phone: "555-9999"}
+    Note right of DB: ❌ LOST UPDATE: Email change reverted!
 ```
 
 For a system requiring strong per-key consistency, this race condition was unacceptable.
