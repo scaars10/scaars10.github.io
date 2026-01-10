@@ -12,7 +12,7 @@ We went through three distinct stages: a simple synchronous operator (too slow),
 
 Our initial proof-of-concept was simple: a global operator that synchronously read from ScyllaDB, enriched the record, and wrote it back.
 
-While reliable, the throughput was not acceptable—around **150K records per hour**. Blocking database calls left Flink resources idle, with mostly CPU and memory sitting unused while waiting for response from DB. To reach our target of millions of records per minute, we would have needed to increase parallelism by order of thousands. However, just increasing parallelism to solve the problem would have stressed the database with too many concurrent connections and significantly bloated the resource footprint of the operator.
+While reliable, the throughput was not acceptable, around **150K records per hour**. Blocking database calls left Flink resources idle, with mostly CPU and memory sitting unused while waiting for response from DB. To reach our target of hundreds of millions of records per minute, we would have needed to increase parallelism by order of thousands. However, just increasing parallelism to solve the problem would have also stressed the database with too many concurrent connections and significantly bloated the resource footprint of the operator.
 
 ---
 
@@ -23,6 +23,7 @@ To fix the throughput, we switched to Flink's `RichAsyncFunction`. Throughput sk
 However, there was a possibility of *lost updates*.
 
 Under high load, if two events for the same key arrived quickly:
+
 1. Event A triggers a read at T0.
 2. Event B triggers a read at T1 (before A's write completes).
 3. Both fetch stale state.
@@ -37,12 +38,13 @@ For a system requiring strong per-key consistency, this race condition was unacc
 To get both speed and consistency, we built a custom operator using `KeyedProcessFunction`. We treat each key as an independent state machine.
 
 **Core Capabilities**:
+
 * **Per-key serialization**: Only one async query runs per key at a time.
 * **Buffering**: Concurrent events are queued.
 * **Caching**: Recent enrichments are stored in state.
 * **Backpressure**: A semaphore caps concurrent DB queries.
 
-This approach achieved **76% of the pure async throughput** but with guaranteed correctness.
+This approach retained **76% of the pure async throughput**, sustaining over 100M records per hour while ensuring strict per-key consistency. The resulting at-least-once semantics satisfied our requirements, as our post-enrichment writes are idempotent.
 
 ---
 
@@ -81,7 +83,7 @@ Flink's threading model doesn't allow emitting records directly from async callb
 
 **Why This Works**
 
-The mailbox pattern helps in communicating between the async I/O thread and Flink's processing thread, without violating Flink's threading constraints.
+The mailbox pattern provides a thread-safe communication channel between the async I/O thread and Flink's processing thread. Instead of emitting directly from a callback (which Flink prohibits) or updating state directly from a callback which can lead to race conditions, we deposit results into a shared "mailbox" that the main thread checks on a timer. This indirection satisfies Flink's threading constraints while preserving async efficiency.
 
 ---
 
@@ -118,9 +120,10 @@ graph TD
 ```
 
 This design provides:
-- **Bounded concurrency** via semaphore-based admission control
-- **Consistent enrichment** through per-key serialization
-- **Natural backpressure** when ScyllaDB is at capacity
+
+* **Bounded concurrency** via semaphore-based admission control
+* **Consistent enrichment** through per-key serialization
+* **Natural backpressure** when ScyllaDB is at capacity
 
 ---
 
@@ -131,10 +134,11 @@ One major challenge with custom async approach was the ability to throttle the n
 **The Problem**
 
 Flink eagerly processes records, firing async queries as fast as possible. Under high load, this can overwhelm the database, causing:
-- Stressing the DB with too many concurrent queries
-- Query timeouts and failures
-- Cascading retries that worsen the problem
-- No natural backpressure to slow down upstream
+
+* Stressing the DB with too many concurrent queries
+* Query timeouts and failures
+* Cascading retries that worsen the problem
+* No natural backpressure to slow down upstream
 
 **Our Solution: Semaphore-Based Admission Control**
 
@@ -156,21 +160,21 @@ This creates a self-regulating system that adapts to DB cluster's actual capacit
 
 Our operator maintains several types of state to coordinate asynchronous operations:
 
-| State | Type | Purpose | Lifecycle |
-|-------|------|---------|-----------|
-| `cacheState` | `ValueState<GenericRecord>` | Caches recently enriched data | Checkpointed, TTL 120s |
-| `eventBuffer` | `ListState<GenericRecord>` | Queues events during active query | Checkpointed, TTL 120s |
-| `isLoading` | `ValueState<Boolean>` | Tracks if query is in progress | Checkpointed, TTL 120s |
-| `activeTimerTimestamp` | `ValueState<Long>` | Tracks registered timer timestamp | Checkpointed, TTL 120s |
-| `asyncResultState` | In-memory cache | Mailbox for async results | Not checkpointed, 60s expiry |
-| `currentAttempt` | In-memory cache | Retry counter & sequence tracker | Not checkpointed, 60s expiry |
+| State                  | Type                        | Purpose                           | Lifecycle                    |
+| ---------------------- | --------------------------- | --------------------------------- | ---------------------------- |
+| `cacheState`           | `ValueState<GenericRecord>` | Caches recently enriched data     | Checkpointed, TTL 120s       |
+| `eventBuffer`          | `ListState<GenericRecord>`  | Queues events during active query | Checkpointed, TTL 120s       |
+| `isLoading`            | `ValueState<Boolean>`       | Tracks if query is in progress    | Checkpointed, TTL 120s       |
+| `activeTimerTimestamp` | `ValueState<Long>`          | Tracks registered timer timestamp | Checkpointed, TTL 120s       |
+| `asyncResultState`     | In-memory cache             | Mailbox for async results         | Not checkpointed, 60s expiry |
+| `currentAttempt`       | In-memory cache             | Retry counter & sequence tracker  | Not checkpointed, 60s expiry |
 
 **Key Design Decisions**
 
-- **Checkpointed state** is restored after failures, preserving consistency
-- **In-memory caches** are rebuilt on restart. Retry mechanism makes sure that it is rebuilt when found empty
-- **TTL (120s)** prevents unbounded state growth for abandoned keys
-- **Sequence numbers** prevent out-of-order async results from corrupting state
+* **Checkpointed state** is restored after failures, preserving consistency
+* **In-memory caches** are rebuilt on restart. Retry mechanism makes sure that it is rebuilt when found empty
+* **TTL (120s)** prevents unbounded state growth for abandoned keys
+* **Sequence numbers** prevent out-of-order async results from corrupting state
 
 ---
 
@@ -178,22 +182,21 @@ Our operator maintains several types of state to coordinate asynchronous operati
 
 ### Retry Strategy
 
-**Exponential Backoff**: 1000ms → 2000ms → 4000ms → 5000ms (capped)
+**Exponential Backoff**: 250ms -> 500ms -> 1000ms -> 2000ms -> 4000ms -> 5000ms (capped)
 
-**Sequence Tracking**: Each retry increments a sequence number. Late-arriving callbacks from earlier attempts are ignored.
+**Sequence Tracking**: Each retry increments a sequence number. Late-arriving callbacks from earlier attempts are ignored to avoid updating the state with stale data.
 
-**Max Retries**: After 6 failed attempts, the operator fails and restarts from the last checkpoint.
-
-**Future Enhancement**: We plan to add a Dead Letter Queue (DLQ) for permanently failed records instead of failing the entire operator.
+**Max Retries**: After `maxRetries` failed attempts, the operator fails and restarts from the last checkpoint.
 
 ### Processing-Time Timer Semantics
 
 Timers are used for both mailbox processing and retry scheduling.
 
 **After Checkpoint Recovery**
-- If the timer's target time has passed, Flink fires it immediately
-- If the target time is in the future, the timer fires at the scheduled time
-- Timers created after the last checkpoint are not restored
+
+* If the timer's target time has passed, Flink fires it immediately
+* If the timer's target time is in the future, the timer fires at the scheduled time
+* Timers created after the last checkpoint are not restored
 
 **Guarantee**: No key gets permanently stuck, even if recovery occurs mid-processing.
 
@@ -215,29 +218,29 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ## Comparison
 
-| Aspect | Global Operator | Pure Async I/O | Custom Async + State |
-|--------|----------------|----------------|---------------------|
-| **Throughput** | ~150K/hour | >100M/hour | >100M/hour (more resources required) |
-| **Concurrency** | Single-threaded | Unbounded (config) | Bounded (semaphore) |
-| **Scalability** | Very limited | Horizontal | Horizontal |
-| **Per-Key Consistency** | Strong | Weak | Strong |
-| **Retry Handling** | Manual | Custom needed | Built-in |
-| **Caching** | None | None | TTL-based state |
-| **Backpressure** | Implicit | None | Explicit |
+| Aspect                  | Synchronous Operator | Pure Async I/O     | Custom Async + State |
+| ----------------------- | -------------------- | ------------------ | -------------------- |
+| **Throughput**          | ~150K/hour           | ~130M/hour         | ~100M/hour           |
+| **Concurrency**         | Single-threaded      | Unbounded (config) | Bounded (semaphore)  |
+| **Scalability**         | Very limited         | Horizontal         | Horizontal           |
+| **Per-Key Consistency** | Strong               | Weak               | Strong               |
+| **Retry Handling**      | Manual               | Custom needed      | Built-in             |
+| **Caching**             | None                 | None               | TTL-based state      |
+| **Backpressure**        | Implicit             | None               | Explicit             |
 
-**Key Takeaway**: We traded 24% of throughput for deterministic consistency—a worthwhile exchange for our use case.
+**Key Takeaway**: We traded ~24% of throughput for deterministic consistency, which is a worthwhile exchange for our use case. Our operator can still match the throughput of pure async operator but it would need more resources.
 
 ---
 
 ## Failure and Recovery
 
-| Component | Behavior After Restart |
-|-----------|----------------------|
-| Checkpointed state | Fully restored |
-| Processing-time timers | Fire immediately if overdue |
-| In-memory caches | Reinitialized empty |
+| Component               | Behavior After Restart         |
+| ----------------------- | ------------------------------ |
+| Checkpointed state      | Fully restored                 |
+| Processing-time timers  | Fire immediately if overdue    |
+| In-memory caches        | Reinitialized empty            |
 | In-flight async queries | Lost; retried when timer fires |
-| **Overall semantics** | **At-least-once delivery** |
+| **Overall semantics**   | **At-least-once delivery**     |
 
 **Note**: In-memory caches (`asyncResultState`, `currentAttempt`) are not checkpointed. On restart, these are empty, and the next retry cycle rebuilds them.
 
@@ -245,38 +248,45 @@ Our design guarantees that events for the same key are processed in a determinis
 
 ## Trade-offs
 
-| Benefit | Cost |
-|---------|------|
-| Predictable ScyllaDB load | Increased average latency per record |
-| Deterministic per-key consistency | Higher operator complexity |
-| Reduced redundant reads (caching) | Additional state memory overhead |
-| Automatic retry with backoff | Processing-time timers (not event-time) |
-| Natural backpressure | Requires careful semaphore tuning |
+| Benefit                           | Cost                                    |
+| --------------------------------- | --------------------------------------- |
+| Predictable ScyllaDB load         | Increased average latency per record    |
+| Deterministic per-key consistency | Higher operator complexity              |
+| Reduced redundant reads (caching) | Additional state memory overhead        |
+| Automatic retry with backoff      | Processing-time timers (not event-time) |
+| Natural backpressure              | Requires careful semaphore tuning       |
 
 ---
 
 ## Results
 
-| Version | Throughput | Consistency | Key Outcome |
-|---------|-----------|-------------|-------------|
-| Global Operator | ~150K/hour | Weak but could be solved easily | Functional baseline, not production-ready |
-| Synchronous Operator | ~3M/hour (depending on parallelism of operator) | Weak but could be solved easily | Functional baseline, not production-ready |
-| Pure Async I/O | >100M/hour | Weak | High throughput, potential data loss under low cardinality load |
-| Custom Async + State | >100M/hour (more resources required) | Strong | Production-ready: fast AND correct |
+| Version              | Throughput                                  | Consistency | Key Outcome                                                      |
+| -------------------- | ------------------------------------------- | ----------- | ---------------------------------------------------------------- |
+| Synchronous Operator | ~150K/hour (scales poorly with parallelism) | Strong      | Functional baseline, not production-ready                        |
+| Pure Async I/O       | ~130M/hour                                  | Weak        | High throughput, potential data loss under concurrent key access |
+| Custom Async + State | ~100M/hour                                  | Strong      | Production-ready: fast AND correct                               |
 
 **Production Impact**
 
 The custom implementation can process hundreds of millions of records per hour while maintaining:
-- **Zero lost updates** for concurrent events
-- **Graceful degradation** under ScyllaDB backpressure
-- **Automatic recovery** from transient failures
-- **Predictable resource usage** across the pipeline
+
+* **Zero lost updates** for concurrent events
+* **Graceful degradation** under ScyllaDB backpressure
+* **Automatic recovery** from transient failures
+* **Predictable resource usage** across the pipeline
 
 ---
 
 ## Downsides
 
-The main downside is complexity. On top of the custom operator implementation, you have to tune semaphores and TTLs carefully—too low causes data loss, too high causes resource exhaustion. We've mitigated this with safe configuration templates, but it's not "set and forget". In future, there is scope to make the operator more *intelligent* by giving it the capability to autotune some of the configs eg. regulate the number of concurrent queries based on the variation of latency from the database cluster.
+The primary trade-off is **operational complexity**. Custom operators require more maintenance than standard Flink components, and configuration is sensitive:
+
+* **Tuning Overhead**: Semaphores and TTLs must be calibrated carefully. Setting limits too low leaves throughput on the table, while limits that are too high risk overwhelming the database or degrading performance.
+* **Mitigation**: We address this complexity using standardized configuration templates for different workload types.
+
+For a single-purpose pipeline, this level of engineering might be overkill. However, for a multi-tenant platform where consistency is paramount, the investment pays strict dividends.
+
+There is scope to implement adaptive concurrency control, allowing the operator to auto-tune its limits based on database latency patterns. This effectively removes the manual tuning from the configuration to some extent, making the system somewhat intelligent and self-optimizing.
 
 ## Conclusion
 
