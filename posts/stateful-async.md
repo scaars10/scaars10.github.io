@@ -37,8 +37,8 @@ sequenceDiagram
     Note over Flink, DB: Initial: {PK: "Cartman", Email: "old@test.com", Phone: "555-0000"}
     
     rect rgb(200, 225, 255)
-    Flink->>DB: READ PK="Cartman" (Event A)
-    Flink->>DB: READ PK="Cartman" (Event B)
+    Flink->>DB: READ PK="Cartman" (Event A: Update Email to new@test.com)
+    Flink->>DB: READ PK="Cartman" (Event B: Update Phone to 555-9999)
     end
     
     Note right of Flink: ⚠️ RACE CONDITION<br/>Both read the same state!
