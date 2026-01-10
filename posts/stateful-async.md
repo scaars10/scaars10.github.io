@@ -89,6 +89,100 @@ The mailbox pattern provides a thread-safe communication channel between the asy
 
 ## Architecture Deep Dive
 
+### Key Implementation Snippets
+
+Below are **simplified excerpts** from the operator that highlight the core mechanics behind per-key serialization, async coordination, and deterministic emission. The full production code includes additional safeguards and configuration.
+
+#### 1) Per-key gate and buffering (`processElement`)
+
+```java
+@Override
+public void processElement(GenericRecord in, Context ctx, Collector<GenericRecord> out) throws Exception {
+  GenericRecord cached = cacheState.value();
+  if (cached != null) {
+    merge(cached, in);
+    cacheState.update(cached);
+    out.collect(cached);
+    return;
+  }
+
+  if (Boolean.TRUE.equals(isLoading.value())) {
+    eventBuffer.add(in);
+    return;
+  }
+
+  isLoading.update(true);
+  eventBuffer.add(in);
+
+  int attempt = Optional.ofNullable(currentAttempt.getIfPresent(ctx.getCurrentKey())).orElse(0);
+  currentAttempt.put(ctx.getCurrentKey(), attempt);
+
+  fireAsyncFetch(ctx.getCurrentKey(), in, ctx);
+}
+```
+
+#### 2) Async fetch + mailbox write (callback path)
+
+```java
+private void fireAsyncFetch(String key, GenericRecord in, Context ctx) throws Exception {
+  int attempt = Optional.ofNullable(currentAttempt.getIfPresent(key)).orElse(0);
+
+  long delayMs = backoffMs(attempt);
+  long t = ctx.timerService().currentProcessingTime() + delayMs;
+  activeTimerTimestamp.update(t);
+  ctx.timerService().registerProcessingTimeTimer(t);
+
+  inflightSemaphore.acquire();
+
+  fetchFromDbAsync(in).whenComplete((rs, err) -> {
+    try {
+      if (err != null) {
+        mailbox.put(key, MailboxEntry.failed(attempt));
+        return;
+      }
+
+      GenericRecord base = mapRowToRecord(rs);
+      byte[] payload = (base == null) ? null : serialize(base);
+      mailbox.put(key, new MailboxEntry(payload, attempt, true));
+    } finally {
+      inflightSemaphore.release();
+    }
+  });
+}
+```
+
+#### 3) Timer-driven merge and emit (`onTimer`)
+
+```java
+@Override
+public void onTimer(long ts, OnTimerContext ctx, Collector<GenericRecord> out) throws Exception {
+  String key = ctx.getCurrentKey();
+  Long active = activeTimerTimestamp.value();
+  if (active == null || ts != active) return;
+
+  int attempt = Optional.ofNullable(currentAttempt.getIfPresent(key)).orElse(0);
+  MailboxEntry entry = mailbox.getIfPresent(key);
+
+  if (entry == null || !entry.success || entry.seq != attempt) {
+    retry(ctx);
+    return;
+  }
+
+  try {
+    GenericRecord base = (entry.payload == null) ? null : deserialize(entry.payload);
+    Iterator<GenericRecord> it = eventBuffer.get().iterator();
+
+    if (base == null) base = it.next();
+    while (it.hasNext()) merge(base, it.next());
+
+    cacheState.update(base);
+    out.collect(base);
+  } finally {
+    clearTemp(ctx);
+  }
+}
+```
+
 Our implementation uses `KeyedProcessFunction` to isolate state per key.
 
 ### Processing Flow
@@ -286,7 +380,7 @@ The primary trade-off is **operational complexity**. Custom operators require mo
 
 For a single-purpose pipeline, this level of engineering might be overkill. However, for a multi-tenant platform where consistency is paramount, the investment pays strict dividends.
 
-There is scope to implement adaptive concurrency control, allowing the operator to auto-tune its limits based on database latency patterns. This effectively removes the manual tuning from the configuration to some extent, making the system somewhat intelligent and self-optimizing.
+There is scope to implement **adaptive concurrency control**, allowing the operator to auto-tune its semaphore limits based on database latency patterns. This effectively removes the manual tuning from the configuration to some extent, making the system somewhat intelligent and self-optimizing.
 
 ## Conclusion
 
